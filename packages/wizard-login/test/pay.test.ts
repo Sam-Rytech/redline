@@ -108,6 +108,7 @@ function memoryStorage() {
 }
 
 function setup() {
+  let price = 400;
   const fake = fakePaymentChain();
   const db = openDb(":memory:");
   const getUtxos = async (addresses: string[]): Promise<Utxo[]> => {
@@ -122,7 +123,7 @@ function setup() {
     return out;
   };
   const app = createApp({
-    reader,
+    reader: { ...reader, current: () => ({ ...reader.current()!, priceUsd: price }) },
     db,
     chain: { getSourceOutput: async () => null, isUnspentOrSpentBy: async () => false, getUtxos },
     config: { loginDomain: "redline.test", secureCookies: false, trustProxyHops: 0, logXff: false, publicOrigin: undefined },
@@ -158,7 +159,7 @@ function setup() {
       token ? { category: hexToBin("cc".repeat(32)), amount: 1n } : undefined,
     );
 
-  return { app, db, fake, fetch, calls, accountId, coin, setFail: (f: typeof fail) => (fail = f) };
+  return { app, db, fake, fetch, calls, accountId, coin, setFail: (f: typeof fail) => (fail = f), setPrice: (p: number) => (price = p) };
 }
 
 interface SignCall {
@@ -372,6 +373,23 @@ describe("payProPass against the real server app", () => {
     expect(inv.status).toBe("paid");
     expect(signCalls[0]!.inputPaths).toEqual([[0, "receive", 2]]);
     expect(storage.m.size).toBe(0);
+  });
+
+  it("a reused invoice_open invoice is paid at its own price (no 5 % check) and its id is stored for retries", async () => {
+    const s = setup();
+    s.setPrice(300); // invoice A costs 83,334 sats
+    s.coin(1, ["receive", 2], 200_000);
+    const lost = memoryStorage();
+    await payError(payProPass({ manager: fakeManager(wallet, s.fake, { reject: "no" }).manager, fetch: s.fetch, storage: lost }));
+    const first = lost.getItem(PENDING_INVOICE_KEY)!;
+    s.setPrice(400); // the new quote is 62,500: A is > 5 % above it
+    s.coin(2, ["receive", 3], 5_000_000); // the next attempt picks other coins → 409 invoice_open
+    const storage = memoryStorage();
+    const e = await payError(payProPass({ manager: fakeManager(wallet, s.fake, { reject: "not now" }).manager, fetch: s.fetch, storage }));
+    expect(e.code).toBe("wallet_rejected"); // got as far as the wallet: not refused by the quote check
+    expect(storage.getItem(PENDING_INVOICE_KEY)).toBe(first);
+    const inv = await payProPass({ manager: fakeManager(wallet, s.fake).manager, fetch: s.fetch, storage });
+    expect(inv).toMatchObject({ id: first, status: "paid", amountSats: 83_334 });
   });
 
   it("a stored invoice of someone else / unknown → cleared, fresh purchase", async () => {

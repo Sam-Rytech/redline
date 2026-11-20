@@ -265,6 +265,8 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
     }
     onStep?.("invoice", `${sel.coins.length} coin(s)`);
     const body: CreateInvoiceRequest = { asset: "BCH", inputs: sel.coins.map((c) => ({ txid: c.txid, vout: c.vout })) };
+    // an invoice made earlier (invoice_open) keeps the price it was made at
+    let reused = false;
     try {
       invoice = await api<Invoice>("/invoices", { method: "POST", body });
     } catch (e) {
@@ -273,9 +275,10 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
       onStep?.("invoice", `reusing open invoice ${e.invoiceId}`);
       invoice = await getInvoice(e.invoiceId);
       if (invoice.status !== "open") throw e;
+      reused = true;
     }
-    // never sign for more than the quote shown (+5 %) or to another address
-    if (invoice.amountSats > quote.amountSats * 1.05 || invoice.merchantAddress !== quote.merchantAddress) {
+    // never sign for more than the quote shown (+5 %; a reused invoice keeps its own price) or to another address
+    if ((!reused && invoice.amountSats > quote.amountSats * 1.05) || invoice.merchantAddress !== quote.merchantAddress) {
       throw new PaymentError(
         "server_rejected",
         `The invoice (${invoice.amountSats} sats to ${invoice.merchantAddress}) does not match the quote (${quote.amountSats} sats to ${quote.merchantAddress}); not paying it.`,
