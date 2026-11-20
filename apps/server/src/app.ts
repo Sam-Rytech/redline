@@ -12,6 +12,9 @@ import {
   type LoansResponse,
   type MeResponse,
   type OkResponse,
+  type TelegramLinkResponse,
+  type Watch,
+  type WatchRules,
 } from "@redline/api-types";
 import { summarize } from "@redline/paryon-decoder";
 import {
@@ -23,7 +26,7 @@ import {
   type VerifyDeps,
 } from "@redline/wizard-login/server";
 import type { ServerConfig } from "./config.js";
-import type { AccountRow, Db } from "./db.js";
+import type { AccountRow, Db, WatchRow } from "./db.js";
 import { addressFor, type Chain } from "./electrum.js";
 import type { ChainReader } from "./reader.js";
 
@@ -43,9 +46,36 @@ const RATE_WINDOW_MS = 60_000;
 const MAX_UTXO_ADDRESSES = 60;
 const WALLET_ADDRESS_COUNT = 20;
 const WALLET_CACHE_MS = 60_000;
+export const LINK_TOKEN_SECONDS = 10 * 60;
+const MAX_LOAN_ID_LENGTH = 128;
+const RULE_KEYS = ["liquidation", "loanGone"] as const;
 
-/** Sessions are stored by hash so a leaked DB does not leak live cookies. */
-const sessionKey = (token: string) => binToHex(sha256.hash(utf8ToBin(token)));
+/** Sessions and Telegram link tokens are stored by hash so a leaked DB does not leak live secrets. */
+export const tokenHash = (token: string) => binToHex(sha256.hash(utf8ToBin(token)));
+const sessionKey = tokenHash;
+
+/** undefined → {}; an object of optional booleans → those; anything else → null */
+function parseRules(v: unknown): Partial<WatchRules> | null {
+  if (v === undefined) return {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Partial<WatchRules> = {};
+  for (const k of RULE_KEYS) {
+    const x = (v as Record<string, unknown>)[k];
+    if (x === undefined) continue;
+    if (typeof x !== "boolean") return null;
+    out[k] = x;
+  }
+  return out;
+}
+
+const toWatch = (w: WatchRow): Watch => ({
+  id: w.id,
+  loanId: w.loanId,
+  rules: w.rules,
+  // "gone" is internal bookkeeping; the API only knows risk bands
+  lastBand: w.lastBand === "gone" ? null : w.lastBand,
+  createdAt: new Date(w.createdAt * 1000).toISOString(),
+});
 const isSessionToken = (t: string | undefined): t is string => typeof t === "string" && /^[0-9a-f]{64}$/.test(t);
 
 export interface AppDeps {
@@ -55,6 +85,8 @@ export interface AppDeps {
   config: Pick<ServerConfig, "loginDomain" | "secureCookies" | "trustProxyHops" | "publicOrigin"> &
     Partial<Pick<ServerConfig, "logXff">>;
   now?: () => Date;
+  /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
+  botUsername?: () => string | undefined;
 }
 
 export function createApp(deps: AppDeps) {
@@ -133,10 +165,12 @@ export function createApp(deps: AppDeps) {
     onError: (c) => c.json(err("too_large", `Request body over ${MAX_BODY_BYTES} bytes`), 413),
   });
   app.use("*", async (c, next) => {
-    if (c.req.method !== "POST") return next();
+    const method = c.req.method;
+    if (method !== "POST" && method !== "PATCH" && method !== "DELETE") return next();
     if (config.publicOrigin && c.req.header("origin") !== config.publicOrigin) {
       return c.json(err("bad_origin", "Cross-origin request refused"), 403);
     }
+    if (method === "DELETE") return next();
     const type = c.req.header("content-type")?.split(";")[0]?.trim().toLowerCase();
     if (type !== "application/json") return c.json(err("bad_content_type", "Send Content-Type: application/json"), 415);
     return limitBody(c, next);
@@ -156,7 +190,7 @@ export function createApp(deps: AppDeps) {
       accountId: a.id,
       pro,
       proUntil: a.proUntil !== null ? new Date(a.proUntil * 1000).toISOString() : null,
-      telegramLinked: false,
+      telegramLinked: db.getTelegramChat(a.id) !== null,
       watchLimit: pro ? null : FREE_WATCH_LIMIT,
     };
   };
@@ -342,6 +376,91 @@ export function createApp(deps: AppDeps) {
     } catch (e) {
       return chainDown(c, e);
     }
+  });
+
+  // ---------- watches ----------
+  const isPro = (a: AccountRow) => a.proUntil !== null && a.proUntil > nowSec();
+  const noWatch = (c: Context) => c.json(err("not_found", "No such watch"), 404);
+
+  app.get("/watches", (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    return c.json(db.listWatches(a.id).map(toWatch));
+  });
+
+  app.post("/watches", async (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    const body = await readJson(c);
+    const loanId = body?.loanId;
+    const rules = parseRules(body?.rules);
+    if (typeof loanId !== "string" || loanId.length === 0 || loanId.length > MAX_LOAN_ID_LENGTH || !rules) {
+      return badRequest(c, "Expected { loanId, rules? } with boolean rules");
+    }
+    const s = reader.current();
+    if (!s) return notReady(c);
+    if (!s.byId.has(loanId)) return c.json(err("not_found", "No such loan"), 404);
+    if (db.listWatches(a.id).some((w) => w.loanId === loanId)) {
+      return c.json(err("watch_exists", "Already watching this loan"), 409);
+    }
+    if (!isPro(a) && db.countWatches(a.id) >= FREE_WATCH_LIMIT) {
+      return c.json(err("watch_limit", "Free plan allows 1 watch. Get the 30-day Pro pass for more."), 403);
+    }
+    const id = randomBytes(8).toString("hex");
+    if (!db.insertWatch({ id, accountId: a.id, loanId, rules: { liquidation: true, loanGone: true, ...rules }, createdAt: nowSec() })) {
+      return c.json(err("watch_exists", "Already watching this loan"), 409);
+    }
+    const row = db.getWatch(id);
+    if (!row) throw new Error("watch vanished after insert");
+    return c.json(toWatch(row), 201);
+  });
+
+  app.patch("/watches/:id", async (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    const w = db.getWatch(c.req.param("id"));
+    if (!w || w.accountId !== a.id) return noWatch(c);
+    const body = await readJson(c);
+    const rules = body && body.rules !== undefined ? parseRules(body.rules) : null;
+    if (!rules) return badRequest(c, "Expected { rules } with boolean rules");
+    db.updateWatchRules(w.id, a.id, { ...w.rules, ...rules });
+    const row = db.getWatch(w.id);
+    return row ? c.json(toWatch(row)) : noWatch(c);
+  });
+
+  app.delete("/watches/:id", (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    if (!db.deleteWatch(c.req.param("id"), a.id)) return noWatch(c);
+    const res: OkResponse = { ok: true };
+    return c.json(res);
+  });
+
+  // ---------- telegram ----------
+  app.post("/telegram/link-token", (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    const bot = deps.botUsername?.();
+    if (!bot) return c.json(err("telegram_unavailable", "Telegram alerts are not configured on this server"), 503);
+    const t = nowSec();
+    // 16 random bytes → 22 base64url chars, inside Telegram's start-payload alphabet [A-Za-z0-9_-]{1,64}
+    const token = randomBytes(16).toString("base64url");
+    db.purgeExpired(t);
+    db.insertLinkToken(tokenHash(token), a.id, t, t + LINK_TOKEN_SECONDS);
+    const res: TelegramLinkResponse = {
+      token,
+      url: `https://t.me/${encodeURIComponent(bot)}?start=${token}`,
+      expiresAt: new Date((t + LINK_TOKEN_SECONDS) * 1000).toISOString(),
+    };
+    return c.json(res);
+  });
+
+  app.post("/telegram/unlink", (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    db.unlinkTelegram(a.id);
+    const res: OkResponse = { ok: true };
+    return c.json(res);
   });
 
   return app;

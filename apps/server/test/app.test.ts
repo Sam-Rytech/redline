@@ -113,7 +113,7 @@ describe("server app", () => {
   });
 
   it("unknown /api path is 404 not_found", async () => {
-    const res = await appFor(fakeReader(state(ago(0)))).request("/api/watches");
+    const res = await appFor(fakeReader(state(ago(0)))).request("/api/nope");
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiError).error.code).toBe("not_found");
   });
