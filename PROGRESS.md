@@ -34,7 +34,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 | # | Gate | Owner | Deadline | Pass condition | If it fails | Status |
 |---|---|---|---|---|---|---|
 | G0 | Accounts & funds | Sam | Fri 16:00 | Repo ✅; jadonamite accepted invite; BUIDL draft on DoraHacks; Paytaca + Selene each ~$0.50 BCH; bot token | Ask in BLAZE Telegram for a few cents | 🟨 |
-| G-API | Front end unblocked | Claude | Fri 17:00 | `api-types` + mock server on `main`; jadonamite can `pnpm dev` the web app against it | — | ⬜ |
+| G-API | Front end unblocked | Claude | Fri 17:00 | `api-types` + mock server on `main`; jadonamite can `pnpm dev` the web app against it | — | ✅ |
 | G2 | Loan decode matches | Claude | Fri 23:00 | For 5 live loans, decoded debt, collateral BCH, rate, liq price equal stats.paryonusd.com | Fix units/endianness; Sat 10:00 ask in Paryon Telegram | ⬜ |
 | G1 | `broadcast:false` behaviour known | Sam | Sat 11:00 | Know for Paytaca and Selene whether the login tx is broadcast | Already covered by fallback — just document it | ⬜ |
 | G3 | Sign-in works end to end | Sam + Claude | Sat 14:00 | Same wallet on laptop and phone → same account; reused/expired nonce rejected | Ship "Watch any loan" without sign-in; keep going | ⬜ |
@@ -49,7 +49,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 
 ### Fri 20 Nov — today
 - [x] **Sam:** GitHub repo created (public), jadonamite invited
-- [ ] **Claude:** monorepo scaffold (pnpm workspaces, TS); `packages/api-types`; mock server with fixtures → **G-API by 17:00**
+- [x] **Claude:** monorepo scaffold (pnpm workspaces, TS); `packages/api-types`; mock server with fixtures → **G-API by 17:00** (see `docs/API.md`)
 - [ ] **Jadonamite:** accept invite; `apps/web` (Vite + React + Tailwind) against the mock; Landing + Watch any loan table
 - [ ] **Sam:** DoraHacks BUIDL draft; @BotFather token; fund Paytaca + Selene; copy Widget Factory slides → **G0**
 - [ ] **Claude:** decoder — Loan address from `@paryonusd/contracts@1.1.0`, Fulcrum `listunspent`, decode commitment, price → **G2 by 23:00**
@@ -138,7 +138,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 
 **Thu 19 Nov** — (no build work)
 
-**Fri 20 Nov** — Renamed to Redline; payment labelled "30-day Pro pass". Public repo created, jadonamite invited. Roles re-split and plan re-scoped.
+**Fri 20 Nov** — Renamed to Redline; payment labelled "30-day Pro pass". Public repo created, jadonamite invited. Roles re-split and plan re-scoped. G-API done: api-types, risk metrics, mock API (`pnpm dev:mock`), docs/API.md merged to main. Added `GET /api/invoices/quote` (price before choosing inputs); duplicate watch → 409. TODO: verify `PARYON_APP_URL`.
 
 **Sat 21 Nov** —
 
