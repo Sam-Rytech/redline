@@ -84,7 +84,7 @@ This is packaged as a reusable widget for other WizardConnect apps: [packages/wi
 
 ## Payments
 
-The Pro pass is one BCH payment (about 0.25 PUSD equivalent, quoted by the server) to a receive-only merchant address, built and signed in the wallet through WizardConnect. The server persists the chosen inputs with the invoice, so a retry reuses them and a second payment would be a double spend the network rejects. Confirmation and the Pro extension happen in one database transaction. Details and accepted risks: ARCHITECTURE.md sections 3.3 and 6.
+The Pro pass is one BCH payment ($0.25 USD worth of BCH, priced from the on-chain BCH/USD price when the invoice is quoted) to a receive-only merchant address, built and signed in the wallet through WizardConnect. The server persists the chosen inputs with the invoice, so a retry reuses them and a second payment would be a double spend the network rejects. Confirmation and the Pro extension happen in one database transaction. Details and accepted risks: ARCHITECTURE.md sections 3.3 and 6.
 
 ## Local development
 
