@@ -74,9 +74,38 @@ describe("connectWallet", () => {
     await c.close();
   });
 
-  it("uses no session persistence (no localStorage reconnect in v1)", () => {
+  it("uses no session persistence: nothing is read or written to localStorage, even after walletready", async () => {
+    const calls: string[] = [];
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => (calls.push(`get:${k}`), store.get(k) ?? null),
+      setItem: (k: string, v: string) => (calls.push(`set:${k}`), void store.set(k, v)),
+      removeItem: (k: string) => (calls.push(`remove:${k}`), void store.delete(k)),
+      clear: () => store.clear(),
+      key: () => null,
+      length: 0,
+    });
+    try {
+      const c = connectWallet();
+      c.manager.walletName = "Paytaca";
+      c.manager.emit("walletready", {} as never);
+      await c.ready;
+      expect(c.manager.loadStoredSession()).toBeNull();
+      await c.close();
+      expect(store.size).toBe(0);
+      expect(calls.filter((x) => !x.startsWith("get:"))).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("forwards the relay (client, status) to manager.updateConnection", async () => {
     const c = connectWallet();
-    expect(c.manager.loadStoredSession()).toBeNull();
-    void c.close();
+    const spy = vi.spyOn(c.manager, "updateConnection").mockImplementation(() => {});
+    const client = { id: "client" };
+    const status = { status: "connected", error: null };
+    relay.statusCallback!({ client, status } as never);
+    expect(spy).toHaveBeenCalledExactlyOnceWith(client, status);
+    await c.close();
   });
 });
