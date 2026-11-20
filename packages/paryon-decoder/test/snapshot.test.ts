@@ -30,9 +30,10 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot({
       loanUtxos: [loanUtxo("t1", 0, 1898581599, loanCommit(315000, 1959, 0))],
       sidecarUtxos: [sidecar("t1", 1, SIDE)],
-      priceUtxos: [priceUtxo(1, 19028)],
+      priceUtxos: [priceUtxo(1, 19028)], blockHeight: 948500,
     });
     expect(snap.priceUsd).toBe(190.28);
+    expect(snap.blockHeight).toBe(948500);
     expect(snap.skipped).toBe(0);
     expect(snap.loans[0]!.id).toBe(SIDE);
     const [v] = computeLoanViews(snap.loans, snap.priceUsd);
@@ -51,7 +52,7 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot({
       loanUtxos: [loanUtxo("t1", 0, 2_000_000_000, c)],
       sidecarUtxos: [sidecar("t1", 1, SIDE)],
-      priceUtxos: [priceUtxo(1, 19028)],
+      priceUtxos: [priceUtxo(1, 19028)], blockHeight: 948500,
     });
     expect(snap.loans[0]!.amountBeingRedeemedPusd).toBe(500);
     const [v] = computeLoanViews(snap.loans, snap.priceUsd);
@@ -63,7 +64,7 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot({
       loanUtxos: [loanUtxo("t1", 0, 50_000_000, loanCommit(0, 100, 100))],
       sidecarUtxos: [sidecar("t1", 1, SIDE)],
-      priceUtxos: [priceUtxo(1, 19028)],
+      priceUtxos: [priceUtxo(1, 19028)], blockHeight: 948500,
     });
     expect(snap.loans).toHaveLength(1);
     expect(computeLoanViews(snap.loans, snap.priceUsd)[0]!.stranded).toBe(true);
@@ -73,7 +74,7 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot({
       loanUtxos: [loanUtxo("t1", 0, 1, loanCommit(100, 1, 1)), loanUtxo("t2", 0, 1, loanCommit(100, 1, 1))],
       sidecarUtxos: [sidecar("t2", 1, SIDE), sidecar("t1", 2, "bb".repeat(32))],
-      priceUtxos: [priceUtxo(1, 19028)],
+      priceUtxos: [priceUtxo(1, 19028)], blockHeight: 948500,
     });
     expect(snap.loans.map((l) => l.id)).toEqual([SIDE]);
     expect(snap.skipped).toBe(1);
@@ -89,7 +90,7 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot({
       loanUtxos: junk,
       sidecarUtxos: junk.map((u) => sidecar(u.txid, 1, SIDE)),
-      priceUtxos: [priceUtxo(1, 19028)],
+      priceUtxos: [priceUtxo(1, 19028)], blockHeight: 948500,
     });
     expect(snap.loans).toHaveLength(0);
     expect(snap.skipped).toBe(0);
@@ -97,7 +98,7 @@ describe("buildSnapshot", () => {
 
   it("takes the highest-sequence price", () => {
     const snap = buildSnapshot({
-      loanUtxos: [], sidecarUtxos: [],
+      loanUtxos: [], sidecarUtxos: [], blockHeight: 1,
       priceUtxos: [priceUtxo(5, 20000), priceUtxo(9, 21000), priceUtxo(7, 22000)],
     });
     expect(snap.priceUsd).toBe(210);
@@ -105,6 +106,6 @@ describe("buildSnapshot", () => {
   });
 
   it("throws without a price UTXO", () => {
-    expect(() => buildSnapshot({ loanUtxos: [], sidecarUtxos: [], priceUtxos: [] })).toThrow("No price contract UTXO");
+    expect(() => buildSnapshot({ loanUtxos: [], sidecarUtxos: [], priceUtxos: [], blockHeight: 1 })).toThrow("No price contract UTXO");
   });
 });

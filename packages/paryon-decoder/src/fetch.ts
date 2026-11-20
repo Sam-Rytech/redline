@@ -22,12 +22,13 @@ export async function fetchSnapshot(opts: { hostname?: string } = {}): Promise<S
           },
         }),
       }));
-    const [loanUtxos, sidecarUtxos, priceUtxos] = await Promise.all([
+    const [loanUtxos, sidecarUtxos, priceUtxos, blockHeight] = await Promise.all([
       get(PARYON_ADDRESSES.loan),
       get(PARYON_ADDRESSES.loanSidecar),
       get(PARYON_ADDRESSES.price),
+      provider.getBlockHeight(),
     ]);
-    return buildSnapshot({ loanUtxos, sidecarUtxos, priceUtxos });
+    return buildSnapshot({ loanUtxos, sidecarUtxos, priceUtxos, blockHeight });
   } finally {
     try {
       await provider.disconnect();

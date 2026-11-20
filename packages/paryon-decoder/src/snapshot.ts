@@ -16,6 +16,8 @@ export interface ChainUtxo {
 export interface Snapshot {
   priceUsd: number;
   priceSequence: number;
+  /** chain tip height when the data was read */
+  blockHeight: number;
   /** includes debt-0 (stranded) loans */
   loans: RawLoan[];
   /** loan UTXOs with no matching sidecar */
@@ -29,6 +31,7 @@ export function buildSnapshot(input: {
   loanUtxos: ChainUtxo[];
   sidecarUtxos: ChainUtxo[];
   priceUtxos: ChainUtxo[];
+  blockHeight: number;
 }): Snapshot {
   let best: { sequence: number; priceUsd: number } | null = null;
   for (const u of input.priceUtxos) {
@@ -62,5 +65,5 @@ export function buildSnapshot(input: {
       amountBeingRedeemedPusd: d.redeemingCents / 100,
     });
   }
-  return { priceUsd: best.priceUsd, priceSequence: best.sequence, loans, skipped };
+  return { priceUsd: best.priceUsd, priceSequence: best.sequence, blockHeight: input.blockHeight, loans, skipped };
 }
