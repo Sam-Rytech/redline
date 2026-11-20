@@ -249,37 +249,74 @@ describe("invoice routes", () => {
     }
   });
 
-  it("find-payment history is cached 20 s across requests; a hopeless invoice goes dead and is never rescanned", async () => {
+  it("the 20 s history cache only helps FIND payments: a payment made after the cache filled is found by a fresh rescan", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const other = s.user("acc2"); // same wallet keys, another account
+    const scans = () => s.fake.calls.filter((c) => c === "recentTransactions").length;
+    // acc2's invoice was spent elsewhere: its GET scans (and fills the cache)
+    const b = (await create(other, [s.C.r3, s.C.c1])).json<Invoice>();
+    s.fake.accept(s.payTx(b, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin);
+    expect((await other(`/api/invoices/${b.id}`)).json<Invoice>()).toMatchObject({ status: "open", inputsSpent: true });
+    expect(scans()).toBe(2); // cached miss → fresh rescan before saying inputsSpent
+    // now acc pays; the cache (filled seconds ago) does not have it
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    const tx = s.payTx(a);
+    s.fake.accept(tx.bin);
+    const got = (await call(`/api/invoices/${a.id}`)).json<Invoice>();
+    expect(got).toMatchObject({ status: "paid", txid: tx.txid });
+    expect(got.inputsSpent).toBeUndefined();
+  });
+
+  it("a cached hit finds a payment without a new scan", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const other = s.user("acc2");
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    const b = (await create(other, [s.C.r3, s.C.c1])).json<Invoice>();
+    s.fake.accept(s.payTx(a).bin);
+    s.fake.accept(s.payTx(b).bin);
+    const scans = () => s.fake.calls.filter((c) => c === "recentTransactions").length;
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().status).toBe("paid");
+    expect((await other(`/api/invoices/${b.id}`)).json<Invoice>().status).toBe("paid");
+    expect(scans()).toBe(1);
+  });
+
+  it("GET never marks an invoice dead; create's fresh check does (past expiry + grace), then it is never rescanned", async () => {
     const s = setup();
     const call = s.user("acc");
     const a = (await create(call, [s.C.big])).json<Invoice>();
     s.fake.accept(s.payTx(a, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin);
-    const scans = () => s.fake.calls.filter((c) => c === "recentTransactions").length;
-    await call(`/api/invoices/${a.id}`);
-    await call(`/api/invoices/${a.id}`);
-    expect(scans()).toBe(1);
-    s.setNow(new Date(NOW.getTime() + 21_000));
-    await call(`/api/invoices/${a.id}`);
-    expect(scans()).toBe(2);
-    // past expiry + 10 min grace with nothing found → dead
     s.setNow(new Date(NOW.getTime() + 41 * 60_000));
     expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "expired", inputsSpent: true });
+    expect(s.db.getInvoice(a.id)!.status).not.toBe("dead");
+    expect((await create(call, [s.C.r3, s.C.c1])).status).toBe(201);
     expect(s.db.getInvoice(a.id)!.status).toBe("dead");
     s.fake.calls.length = 0;
     expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "expired", inputsSpent: true });
     expect(s.fake.calls).toEqual([]);
-    // and create's earlier-invoice check skips it too
-    expect((await create(call, [s.C.r3, s.C.c1])).status).toBe(201);
-    expect(s.fake.calls.filter((c) => c === "recentTransactions" || c === "getOutputs")).toEqual([]);
   });
 
-  it("create does not fail when checking an earlier invoice hits an Electrum outage", async () => {
+  it("create fails closed (503, no invoice) when an earlier invoice cannot be checked", async () => {
+    // spent inputs + the history scan fails
     const s = setup();
     const call = s.user("acc");
     const a = (await create(call, [s.C.big])).json<Invoice>();
     s.fake.accept(s.payTx(a, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin);
     s.fake.fail("recentTransactions");
-    expect((await create(call, [s.C.r3, s.C.c1])).status).toBe(201);
+    const r = await create(call, [s.C.r3, s.C.c1]);
+    expect([r.status, r.code()]).toEqual([503, "chain_unavailable"]);
+    expect(r.json<ApiError>().error.message).toMatch(/earlier payment/);
+    expect(s.db.listInvoices("acc")).toHaveLength(1);
+    // past-expiry earlier invoice whose outputs cannot be read
+    const s2 = setup();
+    const call2 = s2.user("acc");
+    (await create(call2, [s2.C.big])).json<Invoice>();
+    s2.setNow(new Date(NOW.getTime() + 31 * 60_000));
+    s2.fake.fail("getOutputs");
+    const r2 = await create(call2, [s2.C.r3, s2.C.c1]);
+    expect([r2.status, r2.code()]).toEqual([503, "chain_unavailable"]);
+    expect(s2.db.listInvoices("acc")).toHaveLength(1);
   });
 
   it("find-payment needs exactly one OP_RETURN (the invoice's)", async () => {

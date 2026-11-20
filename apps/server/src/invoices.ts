@@ -105,7 +105,7 @@ export interface InvoiceDeps {
 }
 
 /** what a re-check learned about an unpaid invoice */
-type Recheck = "paid" | "unspent" | "spent" | "unknown";
+type Recheck = "paid" | "unspent" | "spent";
 
 export function createInvoices(deps: InvoiceDeps) {
   const { db, chain, now } = deps;
@@ -193,23 +193,24 @@ export function createInvoices(deps: InvoiceDeps) {
     return after.status === "paid" && after.txid === txid;
   };
 
-  /**
-   * Re-check an unpaid invoice: if any input is spent, look for its payment. Marks it paid when found,
-   * dead when hopeless (spent elsewhere, past expiry + grace). Chain failures throw ChainUnavailable.
-   */
-  const recheck = async (r: InvoiceRow, freshHistory: boolean, tolerateScanFailure = false): Promise<Recheck> => {
-    const outs = await onChain(() => chain.getOutputs(r.inputs));
-    if (!outs.some((o) => o !== null && !o.unspent)) return "unspent";
-    let txid: string | null;
-    try {
-      txid = await findPayment(r, freshHistory);
-    } catch (e) {
-      if (!(e instanceof ChainUnavailable) || !tolerateScanFailure) throw e;
-      console.error(`payment scan failed: ${e.message}`);
-      return "spent"; // its coins are gone either way: it cannot be paid again
-    }
-    if (txid && markPaid(r, txid)) return "paid";
+  /** past expiry + grace and spent elsewhere (after a fresh scan): give it up for good */
+  const maybeDead = (r: InvoiceRow) => {
     if (now() > r.expiresAt + DEAD_GRACE_SECONDS) db.markInvoiceDead(r.id);
+  };
+
+  /**
+   * Re-check an unpaid invoice: if any input is spent, look for its payment and mark it paid when found.
+   * The 20 s history cache is only used to FIND a payment: "spent" (no payment) is always the result of a
+   * fresh scan. `mayBury`: also mark it dead when hopeless (create/submit only, never GET).
+   * Chain failures throw ChainUnavailable.
+   */
+  const recheck = async (r: InvoiceRow, o: { cached: boolean; mayBury: boolean }): Promise<Recheck> => {
+    const outs = await onChain(() => chain.getOutputs(r.inputs));
+    if (!outs.some((x) => x !== null && !x.unspent)) return "unspent";
+    let txid = o.cached ? await findPayment(r, false) : null;
+    txid ??= await findPayment(r, true);
+    if (txid && markPaid(r, txid)) return "paid";
+    if (o.mayBury) maybeDead(r);
     return "spent";
   };
 
@@ -267,17 +268,18 @@ export function createInvoices(deps: InvoiceDeps) {
       for (const r of earlier) {
         let state: Recheck;
         try {
-          state = await recheck(r, true, true);
+          state = await recheck(r, { cached: false, mayBury: true });
         } catch (e) {
+          // fail closed: selling a second pass while the first payment cannot be ruled out could charge twice
           if (!(e instanceof ChainUnavailable)) throw e;
           console.error(`earlier invoice check failed: ${e.message}`);
-          state = "unknown"; // carry on; an open one is still treated as open below
+          return err(503, "chain_unavailable", "Could not verify your earlier payment — please try again in a minute");
         }
         if (state === "paid") {
           const paid = fresh(r.id);
           return err(409, "already_paid", `Already paid ✓ invoice ${paid.id}, txid ${paid.txid}. Your Pro pass is active.`, { invoiceId: paid.id });
         }
-        if ((state === "unspent" || state === "unknown") && isOpen(r)) {
+        if (state === "unspent" && isOpen(r)) {
           return err(409, "invoice_open", `Invoice ${r.id} is still open with other coins; pay that one (or wait until it expires).`, { invoiceId: r.id });
         }
       }
@@ -317,7 +319,7 @@ export function createInvoices(deps: InvoiceDeps) {
       let spent = false;
       if (r.status === "open" || r.status === "expired") {
         try {
-          spent = (await recheck(r, false)) === "spent";
+          spent = (await recheck(r, { cached: true, mayBury: false })) === "spent";
         } catch (e) {
           // best effort: answer with what we know
           if (!(e instanceof ChainUnavailable)) throw e;
@@ -368,7 +370,10 @@ export function createInvoices(deps: InvoiceDeps) {
         const kind = res.ok ? "known" : classifyBroadcastError(res.message);
         if (kind === "spent") {
           paidTxid = await findPayment(r, true);
-          if (!paidTxid) return spentElsewhere();
+          if (!paidTxid) {
+            maybeDead(r);
+            return spentElsewhere();
+          }
         } else if (await lookup(txid)) {
           paidTxid = txid;
         } else if (res.ok && res.txid === txid) {
