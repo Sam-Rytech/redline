@@ -1,7 +1,16 @@
 import "./style.css";
 import QRCode from "qrcode";
-import type { ApiError, MeResponse } from "@redline/api-types";
-import { LoginError, connectWallet, deriveAddresses, txidOf, wizardLogin, type WalletConnection } from "@redline/wizard-login/client";
+import type { ApiError, InvoiceQuote, MeResponse } from "@redline/api-types";
+import {
+  LoginError,
+  PaymentError,
+  connectWallet,
+  deriveAddresses,
+  payProPass,
+  txidOf,
+  wizardLogin,
+  type WalletConnection,
+} from "@redline/wizard-login/client";
 
 const API = "/api";
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => {
@@ -27,6 +36,13 @@ const ui = {
   meJson: $("me-json"),
   txid: $("txid"),
   g1: $("g1"),
+  pay: $("pay"),
+  quote: $("quote"),
+  buy: $<HTMLButtonElement>("buy"),
+  payResult: $("pay-result"),
+  payTxid: $("pay-txid"),
+  payLink: $("pay-link"),
+  payMe: $("pay-me"),
   log: $("log"),
 };
 
@@ -35,7 +51,7 @@ function log(line: string) {
   ui.log.textContent = `${t}  ${line}\n${ui.log.textContent ?? ""}`;
 }
 const describe = (e: unknown) =>
-  e instanceof LoginError ? `[${e.code}] ${e.message}` : e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  e instanceof LoginError || e instanceof PaymentError ? `[${e.code}] ${e.message}` : e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 
 let conn: WalletConnection | null = null;
 let signing: AbortController | null = null;
@@ -51,6 +67,7 @@ function resetWalletUi() {
   ui.connect.disabled = false;
   ui.disconnect.disabled = true;
   ui.signin.disabled = false;
+  ui.pay.hidden = true;
 }
 
 async function disconnect(reason: string) {
@@ -181,6 +198,7 @@ ui.signin.addEventListener("click", async () => {
     });
     log("signed in");
     showResult(me, txid);
+    void showPay();
   } catch (e) {
     log(ctrl.signal.aborted ? "Sign-in cancelled (wallet disconnected)" : `sign-in failed: ${describe(e)}`);
     if (txid) showResult(null, txid);
@@ -206,6 +224,65 @@ function showResult(me: MeResponse | null, txid: string | null) {
     ui.g1.append(a, " (G1: did the wallet broadcast it?)");
   }
 }
+
+// ---------- 30-day Pro pass ----------
+let paying = false;
+
+async function showPay() {
+  ui.pay.hidden = false;
+  ui.quote.textContent = "(loading…)";
+  try {
+    const res = await fetch(`${API}/invoices/quote`, { credentials: "include" });
+    const body = (await res.json()) as InvoiceQuote | ApiError;
+    if ("error" in body) {
+      ui.quote.textContent = `unavailable — ${body.error.code}: ${body.error.message}`;
+      ui.buy.disabled = true;
+      return;
+    }
+    ui.quote.textContent = `${body.amountSats.toLocaleString()} sats (≈ $0.25 at ${body.priceUsd.toFixed(2)}/BCH) to ${body.merchantAddress}`;
+    ui.buy.disabled = false;
+  } catch (e) {
+    ui.quote.textContent = `unavailable — ${describe(e)}`;
+  }
+}
+
+ui.buy.addEventListener("click", async () => {
+  if (!conn || paying) return;
+  const c = conn;
+  paying = true;
+  ui.buy.disabled = true;
+  ui.payResult.hidden = true;
+  const ctrl = new AbortController();
+  signing = ctrl;
+  try {
+    const inv = await payProPass({
+      manager: c.manager,
+      apiBase: API,
+      signal: ctrl.signal,
+      onStep: (step, detail) => log(`pay ${step}${detail ? ` — ${detail}` : ""}`),
+    });
+    log(`Pro pass paid: invoice ${inv.id}, txid ${inv.txid}`);
+    ui.payResult.hidden = false;
+    ui.payTxid.textContent = inv.txid ?? "(none)";
+    ui.payLink.textContent = "";
+    if (inv.txid) {
+      const a = document.createElement("a");
+      a.href = `https://blockchair.com/bitcoin-cash/transaction/${inv.txid}`;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = a.href;
+      ui.payLink.append("Explorer: ", a);
+    }
+    const me = await fetch(`${API}/me`, { credentials: "include" }).then((r) => r.json() as Promise<MeResponse>);
+    ui.payMe.textContent = JSON.stringify(me, null, 2);
+  } catch (e) {
+    log(ctrl.signal.aborted ? "Payment cancelled (wallet disconnected)" : `payment failed: ${describe(e)}`);
+  } finally {
+    if (signing === ctrl) signing = null;
+    paying = false;
+    ui.buy.disabled = false;
+  }
+});
 
 async function call(method: "GET" | "POST", path: string) {
   try {

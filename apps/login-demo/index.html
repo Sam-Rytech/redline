@@ -48,6 +48,21 @@
         <p class="small" id="g1"></p>
       </section>
 
+      <section id="pay" hidden>
+        <h2>30-day Pro pass</h2>
+        <p>Price: <span id="quote">(loading…)</span></p>
+        <p class="small">
+          Real mainnet payment from your wallet: it signs <strong>and broadcasts</strong>. Retrying reuses the same
+          coins, so you cannot pay twice for one invoice.
+        </p>
+        <button id="buy">Buy 30-day Pro (≈ $0.25 in BCH)</button>
+        <div id="pay-result" hidden>
+          <p>Payment txid: <code id="pay-txid"></code></p>
+          <p class="small" id="pay-link"></p>
+          <pre id="pay-me"></pre>
+        </div>
+      </section>
+
       <section>
         <h2>Log</h2>
         <pre id="log"></pre>
