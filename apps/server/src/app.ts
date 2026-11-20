@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { binToHex, decodeCashAddress, sha256, utf8ToBin } from "@bitauth/libauth";
+import { decodeCashAddress } from "@bitauth/libauth";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -29,6 +29,7 @@ import type { ServerConfig } from "./config.js";
 import type { AccountRow, Db, WatchRow } from "./db.js";
 import { addressFor, type Chain } from "./electrum.js";
 import type { ChainReader } from "./reader.js";
+import { tokenHash } from "./tokens.js";
 
 const err = (code: string, message: string): ApiError => ({ error: { code, message } });
 const STALE_MS = 5 * 60_000;
@@ -50,8 +51,6 @@ export const LINK_TOKEN_SECONDS = 10 * 60;
 const MAX_LOAN_ID_LENGTH = 128;
 const RULE_KEYS = ["liquidation", "loanGone"] as const;
 
-/** Sessions and Telegram link tokens are stored by hash so a leaked DB does not leak live secrets. */
-export const tokenHash = (token: string) => binToHex(sha256.hash(utf8ToBin(token)));
 const sessionKey = tokenHash;
 
 /** undefined → {}; an object of optional booleans → those; anything else → null */

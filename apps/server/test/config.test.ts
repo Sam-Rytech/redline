@@ -6,6 +6,7 @@ describe("parseConfig", () => {
     expect(parseConfig({})).toEqual({
       port: 8787, refreshMs: 60_000, timeoutMs: 30_000, electrumHost: undefined,
       loginDomain: "localhost", dbPath: "./data/redline.db", secureCookies: true, trustProxyHops: 0, logXff: false, publicOrigin: undefined,
+      telegramBotToken: undefined, botUsername: undefined,
     });
   });
   it("reads valid values", () => {
@@ -13,12 +14,12 @@ describe("parseConfig", () => {
       parseConfig({
         PORT: "9000", REFRESH_MS: "10000", REFRESH_TIMEOUT_MS: "1000", ELECTRUM_HOST: "h",
         LOGIN_DOMAIN: "redline.app", DB_PATH: "/var/lib/redline.db", COOKIE_SECURE: "false", TRUST_PROXY_HOPS: "2", LOG_XFF: "1",
-        PUBLIC_ORIGIN: "https://redline.app",
+        PUBLIC_ORIGIN: "https://redline.app", TELEGRAM_BOT_TOKEN: " 123:abc ", BOT_USERNAME: "@RedlineBot",
       }),
     ).toEqual({
       port: 9000, refreshMs: 10_000, timeoutMs: 1000, electrumHost: "h",
       loginDomain: "redline.app", dbPath: "/var/lib/redline.db", secureCookies: false, trustProxyHops: 2, logXff: true,
-      publicOrigin: "https://redline.app",
+      publicOrigin: "https://redline.app", telegramBotToken: "123:abc", botUsername: "RedlineBot",
     });
   });
   it("falls back on non-finite or non-positive values", () => {

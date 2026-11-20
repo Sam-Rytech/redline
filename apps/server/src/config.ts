@@ -21,6 +21,10 @@ export interface ServerConfig {
   logXff: boolean;
   /** when set, POSTs must carry exactly this Origin header (PUBLIC_ORIGIN) */
   publicOrigin: string | undefined;
+  /** TELEGRAM_BOT_TOKEN from @BotFather; the bot and alerts run only when set. Never log it. */
+  telegramBotToken: string | undefined;
+  /** BOT_USERNAME (without @); when unset the bot asks Telegram (getMe) at startup */
+  botUsername: string | undefined;
 }
 
 const positive = (v: string | undefined, fallback: number, min = 0): number => {
@@ -53,5 +57,7 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     trustProxyHops: parseHops(env),
     logXff: ["1", "true"].includes(env.LOG_XFF?.trim().toLowerCase() ?? ""),
     publicOrigin: origin ? origin.replace(/\/+$/, "") : undefined,
+    telegramBotToken: env.TELEGRAM_BOT_TOKEN?.trim() || undefined,
+    botUsername: env.BOT_USERNAME?.trim().replace(/^@/, "") || undefined,
   };
 }
