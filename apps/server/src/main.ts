@@ -1,15 +1,15 @@
 import { serve } from "@hono/node-server";
 import { fetchSnapshot } from "@redline/paryon-decoder";
 import { createApp } from "./app.js";
+import { parseConfig } from "./config.js";
 import { createChainReader } from "./reader.js";
 
-const port = Number(process.env.PORT ?? 8787);
-const hostname = process.env.ELECTRUM_HOST || undefined;
-const intervalMs = Number(process.env.REFRESH_MS ?? 60_000);
+const { port, electrumHost: hostname, refreshMs: intervalMs, timeoutMs } = parseConfig(process.env);
 
 const reader = createChainReader({
   fetch: () => fetchSnapshot(hostname ? { hostname } : {}),
   intervalMs,
+  timeoutMs,
 });
 reader.start();
 

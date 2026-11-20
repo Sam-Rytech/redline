@@ -36,22 +36,36 @@ const byDistance = (a: LoanView, b: LoanView): number => {
 export function createChainReader(opts: {
   fetch: () => Promise<Snapshot>;
   intervalMs?: number;
+  /** abort a stalled fetch after this long (default 30_000) */
+  timeoutMs?: number;
   now?: () => Date;
   log?: (msg: string) => void;
 }): ChainReader {
   const intervalMs = opts.intervalMs ?? 60_000;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? ((m: string) => console.log(m));
 
   let state: LoanState | null = null;
   let error: string | null = null;
   let inflight: Promise<void> | null = null;
-  let timer: ReturnType<typeof setInterval> | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null; // interval handle
   const listeners: Array<(prev: LoanState | null, next: LoanState) => void> = [];
 
   async function run(): Promise<void> {
     try {
-      const snap = await opts.fetch();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const pending = opts.fetch();
+      pending.catch(() => {}); // a late failure after a timeout must not be unhandled
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`refresh timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+      });
+      let snap: Snapshot;
+      try {
+        snap = await Promise.race([pending, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
       if (snap.loans.length === 0 && state !== null && state.loans.length > 0) {
         throw new Error(`Refresh returned 0 loans (previous state had ${state.loans.length}); keeping previous state`);
       }
@@ -68,7 +82,10 @@ export function createChainReader(opts: {
       error = null;
       for (const fn of listeners) {
         try {
-          fn(prev, next);
+          const r: unknown = fn(prev, next);
+          if (r instanceof Promise) {
+            r.catch((e: unknown) => log(`onUpdate listener failed: ${e instanceof Error ? e.message : String(e)}`));
+          }
         } catch (e) {
           log(`onUpdate listener failed: ${e instanceof Error ? e.message : String(e)}`);
         }

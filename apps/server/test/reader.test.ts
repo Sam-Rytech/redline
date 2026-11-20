@@ -24,8 +24,8 @@ const B = raw("b", 1800, 10e8);
 const S = raw("s", 0, 5e8); // stranded
 
 const NOW = new Date("2026-11-20T12:00:00.000Z");
-const mk = (fetch: () => Promise<Snapshot>, intervalMs = 1000) =>
-  createChainReader({ fetch, intervalMs, now: () => NOW, log: () => {} });
+const mk = (fetch: () => Promise<Snapshot>, intervalMs = 1000, extra: { timeoutMs?: number; log?: (m: string) => void } = {}) =>
+  createChainReader({ fetch, intervalMs, now: () => NOW, log: () => {}, ...extra });
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -159,5 +159,61 @@ describe("chain reader", () => {
     await r.refresh();
     expect(r.current()).not.toBeNull();
     expect(r.lastError()).toBeNull();
+  });
+
+  it("start() twice creates a single interval", async () => {
+    const fetch = vi.fn(async () => snap([A]));
+    const r = mk(fetch, 1000);
+    r.start();
+    r.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    r.stop();
+  });
+
+  it("a stalled fetch times out, records lastError, and the next tick retries; late result ignored", async () => {
+    const resolvers: Array<(s: Snapshot) => void> = [];
+    let calls = 0;
+    const fetch = vi.fn(() => {
+      calls++;
+      return new Promise<Snapshot>((res) => resolvers.push(res));
+    });
+    const r = mk(fetch, 1000, { timeoutMs: 5000 });
+    await Promise.resolve();
+    const p = r.refresh();
+    await vi.advanceTimersByTimeAsync(5000);
+    await p;
+    expect(r.current()).toBeNull();
+    expect(r.lastError()).toBe("refresh timed out after 5s");
+    // next refresh starts a fresh fetch
+    const p2 = r.refresh();
+    expect(calls).toBe(2);
+    resolvers[1]!(snap([A], 200));
+    await p2;
+    expect(r.current()!.blockHeight).toBe(200);
+    expect(r.lastError()).toBeNull();
+    // late result from the timed-out first fetch must not overwrite newer state
+    resolvers[0]!(snap([B], 50));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(r.current()!.blockHeight).toBe(200);
+  });
+
+  it("clears the timeout timer when the fetch settles first", async () => {
+    const r = mk(async () => snap([A]), 1000, { timeoutMs: 5000 });
+    await r.refresh();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("async listener rejection is caught and logged", async () => {
+    const logs: string[] = [];
+    const r = mk(async () => snap([A]), 1000, { log: (m) => logs.push(m) });
+    r.onUpdate(async () => {
+      throw new Error("async listener");
+    });
+    await r.refresh();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logs.some((l) => l.includes("async listener"))).toBe(true);
   });
 });
