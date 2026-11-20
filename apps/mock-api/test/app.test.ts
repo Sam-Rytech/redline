@@ -104,6 +104,27 @@ describe("mock api", () => {
     expect(((await (await call("/api/watches")).json()) as Watch[]).length).toBe(0);
   });
 
+  it("links and unlinks Telegram", async () => {
+    const app = createApp();
+    expect((await app.request("/api/telegram/unlink", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    const call = await signIn(app);
+    await call("/api/mock/telegram-linked");
+    expect(((await (await call("/api/me")).json()) as MeResponse).telegramLinked).toBe(true);
+    const r = await call("/api/telegram/unlink", { method: "POST", body: "{}" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true });
+    expect(((await (await call("/api/me")).json()) as MeResponse).telegramLinked).toBe(false);
+  });
+
+  it("PATCH without JSON content type is 415, like the real server", async () => {
+    const app = createApp();
+    const call = await signIn(app);
+    const { loans } = (await (await app.request("/api/loans")).json()) as LoansResponse;
+    const w = (await (await call("/api/watches", { method: "POST", body: JSON.stringify({ loanId: loans[0]!.id }) })).json()) as Watch;
+    const r = await call(`/api/watches/${w.id}`, { method: "PATCH", headers: { "content-type": "text/plain" }, body: "{}" });
+    expect(r.status).toBe(415);
+  });
+
   it("logs out", async () => {
     const app = createApp();
     const call = await signIn(app);

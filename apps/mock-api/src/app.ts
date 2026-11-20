@@ -42,9 +42,9 @@ export function createApp() {
 
   const authed = (c: Context) => state.signedIn && getCookie(c, SESSION_COOKIE) === SESSION_VALUE;
 
-  // same as the real server: every POST must declare JSON (415 before anything else)
+  // same as the real server: every POST/PATCH must declare JSON (415 before anything else)
   app.use("*", async (c, next) => {
-    if (c.req.method !== "POST") return next();
+    if (c.req.method !== "POST" && c.req.method !== "PATCH") return next();
     const type = c.req.header("content-type")?.split(";")[0]?.trim().toLowerCase();
     if (type !== "application/json") return c.json(err("bad_content_type", "Send Content-Type: application/json"), 415);
     await next();
@@ -161,6 +161,10 @@ export function createApp() {
       expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     };
     return c.json(body);
+  });
+  app.post("/telegram/unlink", (c) => {
+    state.telegramLinked = false;
+    return c.json({ ok: true });
   });
   app.get("/mock/telegram-linked", (c) => {
     state.telegramLinked = true;
