@@ -104,9 +104,19 @@ ui.connect.addEventListener("click", async () => {
     log(`QR render failed: ${describe(e)}`);
   }
   setStatus("waiting for wallet — scan the QR code");
-  c.manager.on("walletready", () => {
+  c.manager.on("walletready", (msg) => {
     walletReady = true;
-    if (conn === c) setStatus(`connected to ${c.walletName() ?? "wallet"}`);
+    if (conn !== c) return;
+    setStatus(`connected to ${c.walletName() ?? "wallet"}`);
+    // Debug summary of what the wallet sent (xpubs truncated). Wallets may send
+    // wallet_ready more than once (e.g. first before the user approves), so
+    // re-read the paths every time.
+    const m = msg as unknown as { supported_protocols?: string[]; session?: Record<string, { paths?: { name: string; xpub: string }[] }> };
+    const sessions = Object.entries(m.session ?? {}).map(
+      ([proto, s]) => `${proto}: [${(s?.paths ?? []).map((p) => `${p.name}=${String(p.xpub).slice(0, 12)}…`).join(", ")}]`,
+    );
+    log(`wallet_ready: protocols ${JSON.stringify(m.supported_protocols ?? [])}; ${sessions.join("; ") || "no session data"}`);
+    showPaths();
   });
   c.manager.on("disconnect", (reason, message) => {
     if (conn === c) void disconnect(`disconnected by wallet (${reason}${message ? `: ${message}` : ""})`);
@@ -119,15 +129,24 @@ ui.connect.addEventListener("click", async () => {
   }
   if (conn !== c) return;
   ui.pairing.hidden = true;
-  const receive = c.manager.getSessionPaths().find((p) => p.name === "receive");
+  showPaths();
+  ui.ready.hidden = false;
+});
+
+function showPaths(): void {
+  const c = conn;
+  if (!c) return;
+  const paths = c.manager.getSessionPaths();
+  const receive = paths.find((p) => p.name === "receive");
   try {
-    ui.addr0.textContent = receive ? (deriveAddresses(receive.xpub, 1)[0] ?? "?") : "(wallet shared no receive path)";
+    ui.addr0.textContent = receive
+      ? (deriveAddresses(receive.xpub, 1)[0] ?? "?")
+      : "(wallet shared no receive path yet — approve the connection in the wallet)";
   } catch (e) {
     ui.addr0.textContent = `(bad receive xpub: ${describe(e)})`;
   }
-  log(`paths shared: ${c.manager.getSessionPaths().map((p) => p.name).join(", ")}`);
-  ui.ready.hidden = false;
-});
+  log(`paths shared: ${paths.map((p) => p.name).join(", ") || "(none)"}`);
+}
 
 ui.copy.addEventListener("click", async () => {
   if (!conn) return;
