@@ -282,6 +282,38 @@ describe("alert runner", () => {
     expect(s.logs.some((l) => /unlinked/.test(l))).toBe(true);
   });
 
+  it("400 chat not found: band advances and the chat is unlinked", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc");
+    s.setFail(Object.assign(new Error("Call to 'sendMessage' failed! (400: Bad Request: chat not found)"), { error_code: 400, description: "Bad Request: chat not found" }));
+    await s.runner.onUpdate(at(0.3), at(0.05));
+    expect(s.db.getWatch("w1")!.lastBand).toBe("critical");
+    expect(s.db.getTelegramChat("acc")).toBeNull();
+  });
+
+  it("other 4xx (not 429) is permanent: band advances, chat stays linked, no retry", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc");
+    s.setFail(Object.assign(new Error("Call to 'sendMessage' failed! (400: Bad Request: message is too long)"), { error_code: 400, description: "Bad Request: message is too long" }));
+    await s.runner.onUpdate(at(0.3), at(0.05));
+    expect(s.db.getWatch("w1")!.lastBand).toBe("critical");
+    expect(s.db.getTelegramChat("acc")).not.toBeNull();
+    s.setFail(null);
+    await s.runner.onUpdate(at(0.05), at(0.05));
+    expect(s.sent).toHaveLength(0);
+  });
+
+  it("429 and 5xx stay transient: old band kept, retried next refresh", async () => {
+    for (const code of [429, 502]) {
+      const s = setup();
+      s.addWatch("w1", "acc");
+      s.setFail(Object.assign(new Error(`Call to 'sendMessage' failed! (${code})`), { error_code: code }));
+      await s.runner.onUpdate(at(0.3), at(0.05));
+      expect(s.db.getWatch("w1")!.lastBand, String(code)).toBe("safe");
+      expect(s.db.getTelegramChat("acc")).not.toBeNull();
+    }
+  });
+
   it("sends to the linked chat, records alerts_sent, updates last_band", async () => {
     const s = setup();
     s.addWatch("w1", "acc");

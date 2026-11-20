@@ -132,9 +132,23 @@ export function evaluate(
   return { alerts, bandUpdates };
 }
 
-/** Telegram answers 403 when the user blocked the bot or removed it from the chat (grammY: GrammyError.error_code) */
-const isChatGone = (e: unknown): boolean =>
-  typeof e === "object" && e !== null && (e as { error_code?: unknown }).error_code === 403;
+/** grammY: GrammyError.error_code / description; undefined for network errors */
+const telegramCode = (e: unknown): number | undefined => {
+  const c = typeof e === "object" && e !== null ? (e as { error_code?: unknown }).error_code : undefined;
+  return typeof c === "number" ? c : undefined;
+};
+/** the chat is gone for good: 403 (bot blocked / removed) or 400 "chat not found" */
+const isChatGone = (e: unknown): boolean => {
+  const code = telegramCode(e);
+  if (code === 403) return true;
+  const text = `${(e as { description?: unknown })?.description ?? ""} ${e instanceof Error ? e.message : ""}`;
+  return code === 400 && /chat not found/i.test(text);
+};
+/** any other 4xx except 429 will fail the same way again: do not retry */
+const isPermanent = (e: unknown): boolean => {
+  const code = telegramCode(e);
+  return code !== undefined && code >= 400 && code < 500 && code !== 429;
+};
 
 export interface AlertRunnerDeps {
   db: Pick<Db, "allWatches" | "getTelegramChat" | "setWatchBand" | "recordAlert" | "unlinkTelegram">;
@@ -196,7 +210,11 @@ export function createAlertRunner(deps: AlertRunnerDeps) {
           // blocked or kicked: stop trying this chat
           db.unlinkTelegram(a.accountId);
           advance(a.watchId);
-          log(`telegram chat for account ${a.accountId.slice(0, 8)} unlinked (403: ${errMsg(e)})`);
+          log(`telegram chat for account ${a.accountId.slice(0, 8)} unlinked (${errMsg(e)})`);
+        } else if (isPermanent(e)) {
+          // e.g. 400 message rejected: retrying would fail forever, so drop this alert
+          advance(a.watchId);
+          log(`telegram send failed permanently (watch ${a.watchId}), dropped: ${errMsg(e)}`);
         } else {
           // transient: keep the old band so the alert is retried next refresh
           log(`telegram send failed (watch ${a.watchId}), will retry: ${errMsg(e)}`);
