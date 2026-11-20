@@ -303,6 +303,21 @@ describe("alert runner", () => {
     expect(s.sent).toHaveLength(0);
   });
 
+  it("401 (bot token rejected) is transient: bands kept, chats kept, one loud log line per cycle", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc");
+    s.addWatch("w2", "acc2");
+    s.setFail(Object.assign(new Error("Call to 'sendMessage' failed! (401: Unauthorized)"), { error_code: 401 }));
+    await s.runner.onUpdate(at(0.3), at(0.05));
+    expect(s.db.getWatch("w1")!.lastBand).toBe("safe");
+    expect(s.db.getWatch("w2")!.lastBand).toBe("safe");
+    expect(s.db.getTelegramChat("acc")).not.toBeNull();
+    expect(s.logs.filter((l) => l.includes("Telegram bot token rejected (401)"))).toHaveLength(1);
+    s.setFail(null);
+    await s.runner.onUpdate(at(0.05), at(0.05));
+    expect(s.sent).toHaveLength(2);
+  });
+
   it("429 and 5xx stay transient: old band kept, retried next refresh", async () => {
     for (const code of [429, 502]) {
       const s = setup();

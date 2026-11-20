@@ -144,10 +144,13 @@ const isChatGone = (e: unknown): boolean => {
   const text = `${(e as { description?: unknown })?.description ?? ""} ${e instanceof Error ? e.message : ""}`;
   return code === 400 && /chat not found/i.test(text);
 };
-/** any other 4xx except 429 will fail the same way again: do not retry */
+/**
+ * any other 4xx will fail the same way again: do not retry. Not 429 (rate limit) and not 401
+ * (our bot token was rejected: an operator problem, the alerts must go out once it is fixed).
+ */
 const isPermanent = (e: unknown): boolean => {
   const code = telegramCode(e);
-  return code !== undefined && code >= 400 && code < 500 && code !== 429;
+  return code !== undefined && code >= 400 && code < 500 && code !== 429 && code !== 401;
 };
 
 export interface AlertRunnerDeps {
@@ -190,6 +193,7 @@ export function createAlertRunner(deps: AlertRunnerDeps) {
     const ordered = [...alerts].sort((a, b) => SEVERITY[b.value] - SEVERITY[a.value]);
     let sent = 0;
     let capped = 0;
+    let tokenRejected = false;
     for (const a of ordered) {
       const chat = db.getTelegramChat(a.accountId);
       if (!chat || (chat.mutedUntil !== null && chat.mutedUntil > t)) {
@@ -215,6 +219,10 @@ export function createAlertRunner(deps: AlertRunnerDeps) {
           // e.g. 400 message rejected: retrying would fail forever, so drop this alert
           advance(a.watchId);
           log(`telegram send failed permanently (watch ${a.watchId}), dropped: ${errMsg(e)}`);
+        } else if (telegramCode(e) === 401) {
+          // keep the old band; say it loudly, once per cycle
+          if (!tokenRejected) log(`ERROR: Telegram bot token rejected (401) — check TELEGRAM_BOT_TOKEN; alerts will be retried: ${errMsg(e)}`);
+          tokenRejected = true;
         } else {
           // transient: keep the old band so the alert is retried next refresh
           log(`telegram send failed (watch ${a.watchId}), will retry: ${errMsg(e)}`);
