@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Invoice, LoansResponse, LoanView, MeResponse, Watch } from "@redline/api-types";
+import type { Invoice, InvoiceQuote, LoansResponse, LoanView, MeResponse, Watch } from "@redline/api-types";
 import { createApp } from "../src/app.js";
 
 async function signIn(app: ReturnType<typeof createApp>) {
@@ -105,5 +105,50 @@ describe("mock api", () => {
     const call = await signIn(app);
     await call("/api/auth/logout", { method: "POST" });
     expect((await call("/api/me")).status).toBe(401);
+  });
+
+  it("quotes the pro pass and validates invoice input", async () => {
+    const app = createApp();
+    expect((await app.request("/api/invoices/quote")).status).toBe(401);
+    const call = await signIn(app);
+    const q = (await (await call("/api/invoices/quote")).json()) as InvoiceQuote;
+    expect(q.asset).toBe("BCH");
+    const inv = (await (
+      await call("/api/invoices", {
+        method: "POST",
+        body: JSON.stringify({ asset: "BCH", inputs: [{ txid: "ab".repeat(32), vout: 0 }] }),
+      })
+    ).json()) as Invoice;
+    expect(inv.amountSats).toBe(q.amountSats);
+    expect(inv.merchantAddress).toBe(q.merchantAddress);
+    const empty = await call("/api/invoices", { method: "POST", body: JSON.stringify({ asset: "BCH", inputs: [] }) });
+    expect(empty.status).toBe(400);
+    expect(((await empty.json()) as { error: { code: string } }).error.code).toBe("bad_request");
+    const wrong = await call("/api/invoices", {
+      method: "POST",
+      body: JSON.stringify({ asset: "PUSD", inputs: [{ txid: "ab".repeat(32), vout: 0 }] }),
+    });
+    expect(wrong.status).toBe(400);
+  });
+
+  it("rejects a duplicate watch on the same loan", async () => {
+    const app = createApp();
+    const call = await signIn(app);
+    const { loans } = (await (await app.request("/api/loans")).json()) as LoansResponse;
+    const body = JSON.stringify({ loanId: loans[0]!.id });
+    expect((await call("/api/watches", { method: "POST", body })).status).toBe(201);
+    const dup = await call("/api/watches", { method: "POST", body });
+    expect(dup.status).toBe(409);
+    expect(((await dup.json()) as { error: { code: string } }).error.code).toBe("watch_exists");
+  });
+
+  it("maps malformed JSON to 400 and unknown paths to 404", async () => {
+    const app = createApp();
+    const res = await app.request("/api/auth/verify", { method: "POST", body: "not json" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("bad_request");
+    const nope = await app.request("/api/nope");
+    expect(nope.status).toBe(404);
+    expect(((await nope.json()) as { error: { code: string } }).error.code).toBe("not_found");
   });
 });

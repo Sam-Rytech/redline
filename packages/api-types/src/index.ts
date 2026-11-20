@@ -130,7 +130,7 @@ export interface Watch {
 }
 
 /** GET /api/watches → Watch[] */
-/** POST /api/watches (403 code "watch_limit" when over FREE_WATCH_LIMIT) */
+/** POST /api/watches (403 code "watch_limit" when over FREE_WATCH_LIMIT; 409 code "watch_exists" if the loan is already watched) */
 export interface CreateWatchRequest {
   loanId: Hex;
   rules?: Partial<WatchRules>;
@@ -167,7 +167,23 @@ export interface Invoice {
   paidAt: ISODate | null;
 }
 
-/** POST /api/invoices */
+export const PRO_PASS_USD = 0.25;
+export const PRO_PASS_DAYS = 30;
+
+/** GET /api/invoices/quote (auth required) — call BEFORE choosing inputs */
+export interface InvoiceQuote {
+  asset: "BCH";
+  amountSats: number;
+  priceUsd: number;
+  merchantAddress: string; // bitcoincash:z…
+  validUntil: ISODate;
+}
+
+/**
+ * POST /api/invoices
+ * Flow: quote → pick inputs ≥ amountSats + fee → POST /invoices → sign → submit.
+ * `inputs` must be non-empty.
+ */
 export interface CreateInvoiceRequest {
   asset: "BCH";
   inputs: Outpoint[];

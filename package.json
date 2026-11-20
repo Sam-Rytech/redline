@@ -2,7 +2,7 @@
   "name": "redline",
   "private": true,
   "packageManager": "pnpm@11.13.1",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22.12" },
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

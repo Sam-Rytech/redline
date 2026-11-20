@@ -9,6 +9,7 @@ All routes are under `/api`. Always call relative URLs (`fetch("/api/loans", { c
 pnpm install
 pnpm dev:mock          # http://localhost:8787/api
 ```
+Requires Node >= 22.12.
 
 Vite proxy (`apps/web/vite.config.ts`, once the web app exists):
 ```ts
@@ -29,14 +30,34 @@ Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay
 | GET | /api/utxos?addresses=a,b | – | `Utxo[]` |
 | GET | /api/me | ✓ | `MeResponse` |
 | GET | /api/me/loans | ✓ | `LoanView[]` |
-| GET/POST | /api/watches | ✓ | `Watch[]` / `Watch` (201) — 403 `watch_limit` on free plan |
+| GET/POST | /api/watches | ✓ | `Watch[]` / `Watch` (201) — 403 `watch_limit` on free plan, 409 `watch_exists` if already watched |
 | PATCH/DELETE | /api/watches/:id | ✓ | `Watch` / `{ ok: true }` |
 | POST | /api/telegram/link-token | ✓ | `TelegramLinkResponse` |
+| GET | /api/invoices/quote | ✓ | `InvoiceQuote` |
 | POST | /api/invoices | ✓ | `Invoice` (201) |
 | GET | /api/invoices/:id | ✓ | `Invoice` |
 | POST | /api/invoices/:id/submit | ✓ | `Invoice` |
 
-Errors are always `{ "error": { "code": "...", "message": "..." } }` (401 `unauthorized`, 403 `watch_limit`, 404 `not_found`, 400 `bad_request`).
+API errors use this envelope: `{ "error": { "code": "...", "message": "..." } }` (401 `unauthorized`, 403 `watch_limit`, 404 `not_found`, 409 `watch_exists`, 400 `bad_request`).
+
+## Request bodies
+
+- `POST /api/auth/challenge`: `ChallengeRequest`
+- `POST /api/auth/verify`: `{ signedTxHex }`
+- `POST /api/watches`: `{ loanId, rules? }`
+- `PATCH /api/watches/:id`: `{ rules }`
+- `POST /api/invoices`: `{ asset: "BCH", inputs: Outpoint[] }` (inputs non-empty)
+- `POST /api/invoices/:id/submit`: `{ signedTxHex }`
+
+## Pro pass payment flow
+
+1. `GET /api/invoices/quote` for `amountSats` and the merchant address.
+2. Pick inputs worth at least `amountSats` + fee.
+3. `POST /api/invoices` with those inputs.
+4. Sign with `broadcast: true`.
+5. `POST /api/invoices/:id/submit` with the signed tx.
+
+Store the invoice id in localStorage so a reload can `GET /api/invoices/:id` and show "Already paid ✓".
 
 ## Mock-only behaviour
 

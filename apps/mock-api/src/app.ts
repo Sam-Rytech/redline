@@ -6,12 +6,14 @@ import type {
   CreateInvoiceRequest,
   CreateWatchRequest,
   Invoice,
+  InvoiceQuote,
   LoansResponse,
   TelegramLinkResponse,
   UpdateWatchRequest,
   Utxo,
   Watch,
 } from "@redline/api-types";
+import { PRO_PASS_DAYS, PRO_PASS_USD } from "@redline/api-types";
 import { computeLoanViews } from "@redline/paryon-decoder";
 import { MOCK_BLOCK_HEIGHT, MOCK_PRICE_USD, makeRawLoans } from "./fixtures.js";
 import { SESSION_COOKIE, SESSION_VALUE, me, newState } from "./state.js";
@@ -19,6 +21,18 @@ import { SESSION_COOKIE, SESSION_VALUE, me, newState } from "./state.js";
 const err = (code: string, message: string): ApiError => ({ error: { code, message } });
 const randHex = (bytes: number) =>
   Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+const MERCHANT_ADDRESS = "bitcoincash:zmockmerchantaddressxxxxxxxxxxxxxxxxxxxxxxx";
+const PROTECTED = ["/api/me", "/api/watches", "/api/telegram", "/api/invoices", "/api/mock"];
+const proPassSats = () => Math.round((PRO_PASS_USD / MOCK_PRICE_USD) * 1e8);
+const readJson = async <T>(c: Context): Promise<T | null> => {
+  try {
+    const v = await c.req.json();
+    return v && typeof v === "object" ? (v as T) : null;
+  } catch {
+    return null;
+  }
+};
+const badJson = (c: Context) => c.json(err("bad_request", "Valid JSON body required"), 400);
 const toHex = (s: string) => Buffer.from(s, "utf8").toString("hex");
 
 export function createApp() {
@@ -30,9 +44,15 @@ export function createApp() {
 
   app.use("*", async (c, next) => {
     const p = c.req.path;
-    const open = p === "/api/health" || p.startsWith("/api/loans") || p.startsWith("/api/auth") || p === "/api/utxos";
-    if (!open && !authed(c)) return c.json(err("unauthorized", "Sign in first"), 401);
+    const guarded = PROTECTED.some((x) => p === x || p.startsWith(x + "/"));
+    if (guarded && !authed(c)) return c.json(err("unauthorized", "Sign in first"), 401);
     await next();
+  });
+
+  app.notFound((c) => c.json(err("not_found", "No such route"), 404));
+  app.onError((e, c) => {
+    console.error(e);
+    return c.json(err("internal", "Internal error"), 500);
   });
 
   app.get("/health", (c) => c.json({ ok: true }));
@@ -68,7 +88,9 @@ export function createApp() {
     return c.json(body);
   });
   app.post("/auth/verify", async (c) => {
-    const { signedTxHex } = await c.req.json<{ signedTxHex?: string }>();
+    const body = await readJson<{ signedTxHex?: string }>(c);
+    if (!body) return badJson(c);
+    const { signedTxHex } = body;
     if (!signedTxHex) return c.json(err("bad_request", "signedTxHex required"), 400);
     state.signedIn = true;
     setCookie(c, SESSION_COOKIE, SESSION_VALUE, { httpOnly: true, sameSite: "Lax", path: "/" });
@@ -95,8 +117,11 @@ export function createApp() {
   // ---- watches
   app.get("/watches", (c) => c.json(state.watches));
   app.post("/watches", async (c) => {
-    const body = await c.req.json<CreateWatchRequest>();
+    const body = await readJson<CreateWatchRequest>(c);
+    if (!body) return badJson(c);
     if (!loans.some((l) => l.id === body.loanId)) return c.json(err("not_found", "No such loan"), 404);
+    if (state.watches.some((w) => w.loanId === body.loanId))
+      return c.json(err("watch_exists", "Already watching this loan"), 409);
     const limit = me(state).watchLimit;
     if (limit !== null && state.watches.length >= limit)
       return c.json(err("watch_limit", "Free plan allows 1 watch. Get the 30-day Pro pass for more."), 403);
@@ -113,7 +138,8 @@ export function createApp() {
   app.patch("/watches/:id", async (c) => {
     const w = state.watches.find((x) => x.id === c.req.param("id"));
     if (!w) return c.json(err("not_found", "No such watch"), 404);
-    const body = await c.req.json<UpdateWatchRequest>();
+    const body = await readJson<UpdateWatchRequest>(c);
+    if (!body) return badJson(c);
     w.rules = { ...w.rules, ...body.rules };
     return c.json(w);
   });
@@ -139,15 +165,29 @@ export function createApp() {
   });
 
   // ---- invoices
+  app.get("/invoices/quote", (c) => {
+    const q: InvoiceQuote = {
+      asset: "BCH",
+      amountSats: proPassSats(),
+      priceUsd: MOCK_PRICE_USD,
+      merchantAddress: MERCHANT_ADDRESS,
+      validUntil: new Date(Date.now() + 5 * 60_000).toISOString(),
+    };
+    return c.json(q);
+  });
   app.post("/invoices", async (c) => {
-    const body = await c.req.json<CreateInvoiceRequest>();
+    const body = await readJson<CreateInvoiceRequest>(c);
+    if (!body) return badJson(c);
+    if (body.asset !== "BCH") return c.json(err("bad_request", "asset must be BCH"), 400);
+    if (!Array.isArray(body.inputs) || body.inputs.length === 0)
+      return c.json(err("bad_request", "inputs must be a non-empty array"), 400);
     const id = randHex(8);
     const inv: Invoice = {
       id,
       status: "open",
       asset: "BCH",
-      amountSats: Math.round((0.25 / MOCK_PRICE_USD) * 1e8),
-      merchantAddress: "bitcoincash:zmockmerchantaddressxxxxxxxxxxxxxxxxxxxxxxx",
+      amountSats: proPassSats(),
+      merchantAddress: MERCHANT_ADDRESS,
       opReturnHex: toHex("PWINV") + id,
       inputs: body.inputs,
       txid: null,
@@ -168,7 +208,7 @@ export function createApp() {
       inv.status = "paid";
       inv.txid = randHex(32);
       inv.paidAt = new Date().toISOString();
-      state.proUntil = new Date(Date.now() + 30 * 86_400_000);
+      state.proUntil = new Date(Date.now() + PRO_PASS_DAYS * 86_400_000);
     }
     return c.json(inv);
   });
