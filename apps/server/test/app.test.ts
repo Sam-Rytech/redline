@@ -62,6 +62,7 @@ describe("server app", () => {
     expect(body.loans.map((l) => l.id)).toEqual(["b", "a", "s"]);
     expect(body.summary).toMatchObject({
       total: 3,
+      activeCount: 2,
       within20pct: 1,
       totalDebtPusd: 2800,
       totalCollateralBch: 25,

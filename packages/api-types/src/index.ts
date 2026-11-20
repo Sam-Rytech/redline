@@ -57,7 +57,12 @@ export interface LoanView {
 }
 
 export interface LoansSummary {
+  /** All loan UTXOs, including stranded (debt 0) ones */
   total: number;
+  /** Loans with debt > 0 — the "N active loans" number stats.paryonusd.com shows */
+  activeCount: number;
+  /** Collateral of active loans only (stats.paryonusd.com "Total Collateral") */
+  activeCollateralBch: number;
   /** Landing counter: loans with distanceToLiquidation < 0.20 */
   within20pct: number;
   totalCollateralBch: number;

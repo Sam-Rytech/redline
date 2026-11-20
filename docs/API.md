@@ -134,6 +134,7 @@ const invoice = await payProPass({
 ## Endpoints
 
 Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with debt 0 that still hold collateral (fully redeemed, unclaimed) and their total collateral in BCH.
+`summary.total` counts every loan including stranded ones; for the "N active loans" and "Total Collateral" numbers that stats.paryonusd.com shows, use `summary.activeCount` and `summary.activeCollateralBch` (loans with debt > 0).
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|

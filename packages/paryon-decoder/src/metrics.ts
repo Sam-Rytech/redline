@@ -70,8 +70,11 @@ export function computeLoanViews(raw: RawLoan[], priceUsd: number): LoanView[] {
 
 export function summarize(loans: LoanView[]): LoansSummary {
   const stranded = loans.filter((l) => l.stranded);
+  const active = loans.filter((l) => l.debtPusd > 0);
   return {
     total: loans.length,
+    activeCount: active.length,
+    activeCollateralBch: active.reduce((a, l) => a + l.collateralBch, 0),
     within20pct: loans.filter((l) => l.distanceToLiquidation !== null && l.distanceToLiquidation < 0.2).length,
     totalCollateralBch: loans.reduce((a, l) => a + l.collateralBch, 0),
     totalDebtPusd: loans.reduce((a, l) => a + l.debtPusd, 0),
