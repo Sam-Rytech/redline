@@ -70,7 +70,7 @@ Repo (pnpm workspaces):
 1. Client connects via WizardConnect → receives xpubs (`receive`, `change`; `defi` = index 7 if present).
 2. Client derives **receive** addresses (indices 0–19), asks the server for UTXOs, picks the **smallest pure-BCH (token-free) UTXO ≥ 2,000 sats** on the receive path. Sign-in must prove control of the receive xpub, because `accountId` is derived from it; change-path UTXOs are refused (`bad_path`).
 3. `POST /auth/challenge {xpubReceive, xpubChange, outpoint, path:["receive", index]}` (mainnet xpubs, receive ≠ change) → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, sha256(binding token)}`, returns `{nonce, expiry, domain}` and sets the binding token as cookie `rl_chal` (HttpOnly, SameSite=Lax, Path=/api/auth, Max-Age=300, Secure). This binds the challenge to the requesting browser, so a login tx that leaks (e.g. a wallet broadcasts it and a mempool watcher copies it) cannot be redeemed by anyone else.
-4. Client builds the login transaction (CashScript `TransactionBuilder`, placeholder P2PKH unlocker):
+4. Client builds the login transaction (`buildUnsignedLoginTx`, libauth):
    - Input 0: the chosen UTXO
    - Output 0: `OP_RETURN` → `"WZL1"` | domain (utf-8) | nonce (16 B) | expiry (uint32 LE)
    - Output 1: P2PKH back to **the same address**, value = input − fee (client uses 400 sats; server accepts 200–2,000)
@@ -91,8 +91,9 @@ Repo (pnpm workspaces):
 
 **Public API (for other BLAZE teams):**
 ```ts
-// client
-const session = await wizardLogin({ manager /* DappConnectionManager */, apiBase, domain });
+// client (@redline/wizard-login/client): domain comes from the server's challenge
+const conn = connectWallet();  await conn.ready;   // QR: conn.qrUri
+const me = await wizardLogin({ manager: conn.manager, apiBase: "/api" });
 // server (framework-agnostic)
 createChallenge(input) -> Challenge
 verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -> { accountId }

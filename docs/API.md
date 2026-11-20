@@ -32,7 +32,7 @@ Env: `LOGIN_DOMAIN` (default `localhost`; must match what the client puts in the
 
 ### Wallet sign-in (real server)
 
-Full protocol: ARCHITECTURE.md §3.1. Code: `packages/wizard-login` (`protocol.ts` shared, `server/` verification). The browser helper that drives WizardConnect is coming next; until then the format below is what it must produce (`buildUnsignedLoginTx` builds it).
+Full protocol: ARCHITECTURE.md §3.1. Code: `packages/wizard-login` (`protocol.ts` shared, `server/` verification). The browser helper `wizardLogin` (see **Sign-in (front end)** below) does all of this for you; the steps are listed for reference (`buildUnsignedLoginTx` builds the tx).
 
 Every POST must send `Content-Type: application/json` (else 415 `bad_content_type`), a body ≤ 32 KB (else 413 `too_large`), and when `PUBLIC_ORIGIN` is set a matching `Origin` (else 403 `bad_origin`). Use `credentials: "include"` so the cookies flow.
 
@@ -49,6 +49,43 @@ Every POST must send `Content-Type: application/json` (else 415 `bad_content_typ
 - `GET /api/me/loans` → `LoanView[]`: loans whose id matches a **minting** NFT category held on receive/change addresses 0–19 (cached 60 s per account). 401 without a session, 503 `not_ready` before the first chain refresh.
 - `GET /api/utxos?addresses=a,b` → `Utxo[]` (with token data). 1–60 `bitcoincash:` addresses, else 400 `bad_request`.
 - `/api/auth/*` and `/api/utxos` share a limit of 30 requests/min per client IP → 429 `rate_limited`.
+
+## Sign-in (front end)
+
+Import from `@redline/wizard-login/client` (workspace package; pins `@wizardconnect/dapp` 0.2.8 + `@wizardconnect/core` 0.2.11):
+
+```ts
+import { connectWallet, wizardLogin, LoginError } from "@redline/wizard-login/client";
+
+const conn = connectWallet();                // { qrUri, ready, manager, walletName(), close() }
+showQr(conn.qrUri);                          // QR for a phone wallet, or <a href={conn.qrUri}> on the same device
+await conn.ready;                            // wallet shared its xpubs (rejects if it disconnects first)
+try {
+  const me = await wizardLogin({ manager: conn.manager, onStep: (s, d) => console.log(s, d) });
+  // signed in: rl_session cookie is set, `me` is the MeResponse
+} catch (e) {
+  if (e instanceof LoginError) show(e.code, e.message); // show the full message; e.address for no_funds
+}
+await conn.close();                          // when the user disconnects
+```
+
+- Options: `apiBase` (default `"/api"`), `signal` (AbortSignal; an abort rejects with the AbortError, not a LoginError), `onStep(step, detail)` with steps `addresses → utxos → challenge → signing → verifying`, `onSigned(txHex)` (the wallet's signed login tx; `txidOf(hex)` gives its id), `fetch` (for tests). All requests use `credentials: "include"` — the API must be same-origin (Vite proxy / Vercel rewrite).
+- `LoginError.code`:
+  - `no_paths` — the wallet did not share usable `receive` + `change` xpubs.
+  - `no_funds` — no token-free coin ≥ 2,000 sats on receive addresses 0–19. The message tells the user to send 2,000 sats and includes receive address 0 (also `e.address`).
+  - `wallet_rejected` — the wallet refused or failed to sign (its own message is kept). Do not auto-retry with another wallet.
+  - `server_rejected` — the server said no; message is `"<error.code>: <message>"`, also `e.serverCode` and `e.status` (e.g. `bad_signature`, `rate_limited`, `chain_unavailable`).
+  - `network` — the server could not be reached or did not answer JSON.
+- `connectWallet({ dappName, dappIcon, onRelayStatus })`: `dappName` defaults to `"Redline"`; no session persistence in v1 (a page reload needs a new pairing). `manager` emits `walletready`, `disconnect`, `reconnecting`.
+- The server's `LOGIN_DOMAIN` must equal the site's host in production (the client copies `domain` from the challenge into the login tx).
+
+### Demo page (real wallets)
+
+```bash
+pnpm dev:server        # real server on :8787
+pnpm dev:login         # http://localhost:5174 (proxies /api to :8787)
+```
+Open http://localhost:5174, click **Connect wallet**, scan with Paytaca or Selene, then **Sign in**. The page logs every step with timestamps, shows the `MeResponse`, the login txid and a Blockchair link to check whether the wallet broadcast it (it should not). Buttons: GET /me, Log out, Disconnect wallet. The wallet needs a plain coin of ≥ 2,000 sats on one of its first 20 receive addresses.
 
 ## Endpoints
 
@@ -101,7 +138,3 @@ Store the invoice id in localStorage so a reload can `GET /api/invoices/:id` and
 - Submitting an invoice marks it paid and turns on Pro (watch limit becomes unlimited).
 - `GET /api/mock/telegram-linked` marks Telegram as connected (requires sign-in, like other non-public routes).
 - State resets when the mock restarts.
-
-## Real sign-in (later)
-
-The Sign in screen will call `wizardLogin({ manager, apiBase: "/api", domain })` from `packages/wizard-login` (not created yet); it returns a `MeResponse`. Until then, use the mock shortcut above.

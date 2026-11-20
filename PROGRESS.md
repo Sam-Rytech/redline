@@ -57,7 +57,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 
 ### Sat 21 Nov
 - [x] **Claude:** chain reader (60 s poll, 30 s timeout, keeps last good state) + real `/loans` (`pnpm dev:server`); snapshot table deferred to the auth/DB slice
-- [ ] **Claude:** `wizard-login` client + `/auth/challenge`, `/auth/verify`, sessions, `/me`, `/me/loans` (sidecar mapping)
+- [x] **Claude:** `wizard-login` client + `/auth/challenge`, `/auth/verify`, sessions, `/me`, `/me/loans` (sidecar mapping)
 - [ ] **Sam:** test login tx on Paytaca + Selene → **G1 by 11:00**, then **G3 by 14:00**
 - [ ] **Jadonamite:** Sign in screen (QR + "signed, not sent" explainer), My loans cards, Alerts screen, banner, footer, mobile layout
 - [ ] Deploy server (Railway) + web (Vercel) by 12:00 — even if ugly
