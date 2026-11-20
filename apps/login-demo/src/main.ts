@@ -38,6 +38,7 @@ const ui = {
   g1: $("g1"),
   pay: $("pay"),
   quote: $("quote"),
+  proStatus: $("pro-status"),
   buy: $<HTMLButtonElement>("buy"),
   payResult: $("pay-result"),
   payTxid: $("pay-txid"),
@@ -228,9 +229,31 @@ function showResult(me: MeResponse | null, txid: string | null) {
 // ---------- 30-day Pro pass ----------
 let paying = false;
 
+/** Pro status from /me; Buy is disabled while a pass is running. True when Pro is active. */
+async function refreshPro(): Promise<boolean> {
+  try {
+    const me = (await fetch(`${API}/me`, { credentials: "include" }).then((r) => r.json())) as MeResponse | ApiError;
+    if ("error" in me) {
+      ui.proStatus.textContent = `unknown — ${me.error.code}`;
+      return false;
+    }
+    ui.payMe.textContent = JSON.stringify(me, null, 2);
+    ui.proStatus.textContent = me.pro && me.proUntil ? `Pro active until ${new Date(me.proUntil).toLocaleString()}` : "Free plan";
+    ui.buy.disabled = me.pro;
+    return me.pro;
+  } catch (e) {
+    ui.proStatus.textContent = `unknown — ${describe(e)}`;
+    return false;
+  }
+}
+
 async function showPay() {
   ui.pay.hidden = false;
   ui.quote.textContent = "(loading…)";
+  if (await refreshPro()) {
+    ui.quote.textContent = "(not needed while Pro is active)";
+    return;
+  }
   try {
     const res = await fetch(`${API}/invoices/quote`, { credentials: "include" });
     const body = (await res.json()) as InvoiceQuote | ApiError;
@@ -273,14 +296,21 @@ ui.buy.addEventListener("click", async () => {
       a.textContent = a.href;
       ui.payLink.append("Explorer: ", a);
     }
-    const me = await fetch(`${API}/me`, { credentials: "include" }).then((r) => r.json() as Promise<MeResponse>);
-    ui.payMe.textContent = JSON.stringify(me, null, 2);
   } catch (e) {
-    log(ctrl.signal.aborted ? "Payment cancelled (wallet disconnected)" : `payment failed: ${describe(e)}`);
+    if (e instanceof PaymentError && e.code === "already_paid") {
+      // the server found an earlier payment: that is a success
+      log(`Already paid ✓ — ${e.message}`);
+      ui.payResult.hidden = false;
+      ui.payTxid.textContent = /txid ([0-9a-f]{64})/.exec(e.message)?.[1] ?? "(see log)";
+      ui.payLink.textContent = "Already paid ✓";
+    } else {
+      log(ctrl.signal.aborted ? "Payment cancelled (wallet disconnected)" : `payment failed: ${describe(e)}`);
+    }
   } finally {
     if (signing === ctrl) signing = null;
     paying = false;
     ui.buy.disabled = false;
+    await refreshPro();
   }
 });
 
