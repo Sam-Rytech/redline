@@ -171,7 +171,10 @@ export interface Invoice {
   asset: "BCH";
   amountSats: number;
   merchantAddress: string; // bitcoincash:z…
-  /** OP_RETURN payload hex: "PWINV" | id */
+  /**
+   * OP_RETURN payload hex after the 0x6a opcode: push "PWINV" + push of the 16 id bytes
+   * (05 5057494e56 10 <id>). The output's locking bytecode is "6a" + this.
+   */
   opReturnHex: Hex;
   /** Inputs the client must reuse on any retry */
   inputs: Outpoint[];

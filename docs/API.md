@@ -22,9 +22,9 @@ Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay
 ```bash
 pnpm dev:server        # http://localhost:8787/api  (stop the mock first: same port)
 ```
-Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s (after a failed refresh it retries once after 10 s). Real routes so far: `GET /api/health`, `GET /api/loans`, `GET /api/loans/:id`, `POST /api/auth/challenge`, `POST /api/auth/verify`, `POST /api/auth/logout`, `GET /api/me`, `GET /api/me/loans`, `GET /api/utxos`, `GET/POST /api/watches`, `PATCH/DELETE /api/watches/:id`, `POST /api/telegram/link-token`, `POST /api/telegram/unlink`. Every other `/api/*` path returns 404 `not_found` (invoices still need the mock).
+Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s (after a failed refresh it retries once after 10 s). Real routes so far: `GET /api/health`, `GET /api/loans`, `GET /api/loans/:id`, `POST /api/auth/challenge`, `POST /api/auth/verify`, `POST /api/auth/logout`, `GET /api/me`, `GET /api/me/loans`, `GET /api/utxos`, `GET/POST /api/watches`, `PATCH/DELETE /api/watches/:id`, `POST /api/telegram/link-token`, `POST /api/telegram/unlink`, `GET /api/invoices/quote`, `POST /api/invoices`, `GET /api/invoices/:id`, `POST /api/invoices/:id/submit`. Every other `/api/*` path returns 404 `not_found`.
 
-Env: `LOGIN_DOMAIN` (default `localhost`; must match what the client puts in the login tx), `DB_PATH` (default `./data/redline.db`), `COOKIE_SECURE` (cookies are `Secure` by default, which works on `http://localhost`; set `false` only for plain-http testing on another host), `TRUST_PROXY_HOPS` (integer >= 0, default 0 = rate limit by socket address; N = the Nth `x-forwarded-for` entry from the right, 1 = right-most; fewer entries than N falls back to the left-most; legacy `TRUST_PROXY=true` means 1; an invalid value fails at start). Behind Vercel rewrite -> Railway, set `TRUST_PROXY_HOPS` after checking the real header chain on staging (log it once with `LOG_XFF=1`, which logs the raw `x-forwarded-for` of the first 5 `/api/auth` requests, never more), `PUBLIC_ORIGIN` (e.g. `https://redline.app`; when set, every POST, PATCH and DELETE must send that exact `Origin`; the bot's `/start` intro also links to it), `ELECTRUM_HOST` (tried first; then the built-in public Fulcrum list `bch.imaginary.cash`, `electrum.imaginary.cash`, `bch.loping.net`, `fulcrum.greyh.at`, `electroncash.dk` on connection failure), `TELEGRAM_BOT_TOKEN` (turns on the Telegram bot and alerts; without it `POST /api/telegram/link-token` returns 503 `telegram_unavailable`; get one by messaging [@BotFather](https://t.me/BotFather) `/newbot`), `BOT_USERNAME` (the bot's username without `@`, used in the `t.me` link; if unset the server asks Telegram via `getMe` at start). Node prints a one-line SQLite `ExperimentalWarning` at start; harmless.
+Env: `LOGIN_DOMAIN` (default `localhost`; must match what the client puts in the login tx), `DB_PATH` (default `./data/redline.db`), `COOKIE_SECURE` (cookies are `Secure` by default, which works on `http://localhost`; set `false` only for plain-http testing on another host), `TRUST_PROXY_HOPS` (integer >= 0, default 0 = rate limit by socket address; N = the Nth `x-forwarded-for` entry from the right, 1 = right-most; fewer entries than N falls back to the left-most; legacy `TRUST_PROXY=true` means 1; an invalid value fails at start). Behind Vercel rewrite -> Railway, set `TRUST_PROXY_HOPS` after checking the real header chain on staging (log it once with `LOG_XFF=1`, which logs the raw `x-forwarded-for` of the first 5 `/api/auth` requests, never more), `PUBLIC_ORIGIN` (e.g. `https://redline.app`; when set, every POST, PATCH and DELETE must send that exact `Origin`; the bot's `/start` intro also links to it), `ELECTRUM_HOST` (tried first; then the built-in public Fulcrum list `bch.imaginary.cash`, `electrum.imaginary.cash`, `bch.loping.net`, `fulcrum.greyh.at`, `electroncash.dk` on connection failure), `TELEGRAM_BOT_TOKEN` (turns on the Telegram bot and alerts; without it `POST /api/telegram/link-token` returns 503 `telegram_unavailable`; get one by messaging [@BotFather](https://t.me/BotFather) `/newbot`), `BOT_USERNAME` (the bot's username without `@`, used in the `t.me` link; if unset the server asks Telegram via `getMe` at start), `MERCHANT_ADDRESS` (where Pro pass payments go: a mainnet `bitcoincash:` address, token-aware `z…` preferred, `q…`/`p…` also accepted; receive-only, the server never has its key; an invalid value fails at start; unset → every invoice route answers 503 `payments_unavailable`). Node prints a one-line SQLite `ExperimentalWarning` at start; harmless.
 
 - For the first few seconds after start, `/api/loans` and `/api/loans/:id` return 503 `{ "error": { "code": "not_ready", ... } }`. Show a loading state and retry.
 - Loans come sorted riskiest first (stranded loans last).
@@ -93,13 +93,41 @@ await conn.close();                          // when the user disconnects
 - `connectWallet({ dappName, dappIcon, onRelayStatus })`: `dappName` defaults to `"Redline"`; no session persistence in v1 (a page reload needs a new pairing). `manager` emits `walletready`, `disconnect`, `reconnecting`.
 - The server's `LOGIN_DOMAIN` must equal the site's host in production (the client copies `domain` from the challenge into the login tx).
 
+### Pro pass payments (real server)
+
+30-day Pro pass = $0.25 in BCH, one-time, mainnet. All routes need a session (401) and `MERCHANT_ADDRESS` (else 503 `payments_unavailable`); they share the 30/min/IP rate limit with `/api/auth/*` and `/api/utxos`. 503 `chain_unavailable` whenever Electrum cannot be reached. The browser helper `payProPass` (below) does all of this.
+
+- `GET /api/invoices/quote` → `InvoiceQuote`: `amountSats = ceil(0.25 / priceUsd × 1e8)` at the chain reader's current price, `validUntil` = now + 5 min. 503 `not_ready` before the first chain refresh.
+- `POST /api/invoices { asset: "BCH", inputs: Outpoint[] }` → 201 `Invoice`. The amount is fixed now from the current price (never from the client). The server fetches every input from Electrum. Errors (400 unless noted): `bad_request` (asset not BCH, 0 or > 10 inputs, malformed outpoint), `duplicate_input`, `input_not_found`, `foreign_input` (not on receive/change address 0–19 of the signed-in wallet), `token_input`, `input_spent`, `insufficient_inputs` (total < amountSats + 500), 409 `already_paid` (an earlier unpaid invoice of this account from the last 24 h turns out to be paid on chain: it is marked paid and Pro is on; the message says "Already paid ✓" with the txid), 503 `not_ready`. Invoices expire after 30 min. One open invoice per account: the same inputs (any order) return the open one (200); different inputs expire it.
+- `Invoice.opReturnHex` = the OP_RETURN payload after the `0x6a` opcode: push `"PWINV"` + push of the 16 id bytes (`05 5057494e56 10 <id>`); the output's locking bytecode is `6a` + that. `encodeInvoiceOpReturn(id)` (from `@redline/wizard-login`) builds it.
+- The payment tx: exactly the invoice's inputs (any order), one output paying ≥ `amountSats` to `merchantAddress`, exactly one OP_RETURN output (the invoice's), no token outputs; change is free-form.
+- `POST /api/invoices/:id/submit { signedTxHex }` → `Invoice` (`paid`). Someone else's or an unknown invoice → 404 `not_found`; already paid → the invoice unchanged (idempotent; Pro is never extended twice). Checks in order (400): `bad_request` (not hex), `bad_tx`, `wrong_inputs`, `underpaid`, `wrong_op_return`, `token_output`. Then the server broadcasts it itself: accepted, or "already known" (the wallet broadcast it first, the usual case), and the node returns the tx → paid. Inputs already spent → it looks for the paying tx in the merchant address's recent history (50 newest, mempool first): found → paid with that txid; else 409 `inputs_spent`. Any other rejection → 502 `broadcast_failed` with the node's reason. An expired invoice is still accepted (its coins are pinned, so it is still one payment).
+- `GET /api/invoices/:id` → `Invoice`; while unpaid, if any of its inputs is spent the server runs the same history search and marks it paid when found (covers a submit that never arrived). An Electrum outage does not fail it: it answers with what it knows.
+- Paid → `pro_until = max(now, pro_until) + 30 days` (stacks on a running pass), in the same DB transaction that marks the invoice paid; `GET /api/me` shows `pro: true`, `watchLimit: null`.
+
 ### Demo page (real wallets)
 
 ```bash
 pnpm dev:server        # real server on :8787
 pnpm dev:login         # http://localhost:5174 (proxies /api to :8787)
 ```
-Open http://localhost:5174, click **Connect wallet**, scan with Paytaca or Selene, then **Sign in**. The page logs every step with timestamps, shows the `MeResponse`, the login txid and a Blockchair link to check whether the wallet broadcast it (it should not). Buttons: GET /me, Log out, Disconnect wallet. The wallet needs a plain coin of ≥ 2,000 sats on one of its first 20 receive addresses.
+Open http://localhost:5174, click **Connect wallet**, scan with Paytaca or Selene, then **Sign in**. The page logs every step with timestamps, shows the `MeResponse`, the login txid and a Blockchair link to check whether the wallet broadcast it (it should not). Buttons: GET /me, Log out, Disconnect wallet. The wallet needs a plain coin of ≥ 2,000 sats on one of its first 20 receive addresses. After sign-in the page shows the Pro pass quote (sats, price, merchant address) and **Buy 30-day Pro (≈ $0.25 in BCH)**, which runs `payProPass` with a step log, then shows the txid, a Blockchair link and `/me` (needs `MERCHANT_ADDRESS` on the server; this is a real mainnet payment).
+
+## Pro pass (front end)
+
+```ts
+import { payProPass, PaymentError } from "@redline/wizard-login/client";
+
+const invoice = await payProPass({
+  manager, // the connected wallet (same as wizardLogin)
+  onStep: (step, detail) => log(step, detail), // "quote" | "coins" | "invoice" | "signing" | "submitting" | "checking"
+  // optional: apiBase = "/api", fetch, signal, storage = localStorage
+}); // resolves with the paid Invoice
+```
+- Keeps the pending invoice id in `localStorage["redline-pending-invoice"]`. Every call first `GET`s that invoice: `paid` → returns it at once, with step `checking` and detail "Already paid ✓ txid …" (show that); `open` → reuses the invoice's pinned inputs (never picks new coins); expired/unknown → starts fresh.
+- New purchase: quote → `GET /api/utxos` for receive + change 0–19 → token-free coins, largest first, until ≥ amountSats + max(fee, 500) (fee ≈ 1 sat/byte, min 300, ≤ 10 inputs) → `POST /api/invoices`. Tx: inputs in the invoice's order; outputs merchant, OP_RETURN, change to change address 0 (dropped into the fee below 546 sats); `signTransaction({ broadcast: true, userPrompt: "Pay 30-day Redline Pro pass" })` with `inputPaths` built from the final input order.
+- If the submit's connection fails it asks `GET /api/invoices/:id` (the server finds a payment the wallet already broadcast) → paid; otherwise `network`. Retrying is safe: it reuses the same coins, so a second payment is a double spend the network refuses.
+- `PaymentError.code`: `no_paths`, `no_funds` (message says how many sats and names receive address 0, also in `address`), `wallet_rejected` (the wallet's own message; the invoice is kept: never retry with other coins blindly), `server_rejected` (`serverCode`, `status` from the API), `already_paid` (the server found an earlier payment: show "Already paid ✓" and refresh `/me`), `network`.
 
 ## Endpoints
 
@@ -133,18 +161,18 @@ API errors use this envelope: `{ "error": { "code": "...", "message": "..." } }`
 - `POST /api/auth/verify`: `{ signedTxHex }`
 - `POST /api/watches`: `{ loanId, rules? }`
 - `PATCH /api/watches/:id`: `{ rules }`
-- `POST /api/invoices`: `{ asset: "BCH", inputs: Outpoint[] }` (inputs non-empty)
+- `POST /api/invoices`: `{ asset: "BCH", inputs: Outpoint[] }` (1–10 inputs)
 - `POST /api/invoices/:id/submit`: `{ signedTxHex }`
 
 ## Pro pass payment flow
 
 1. `GET /api/invoices/quote` for `amountSats` and the merchant address.
-2. Pick inputs worth at least `amountSats` + fee.
+2. Pick inputs worth at least `amountSats` + 500 (fee headroom).
 3. `POST /api/invoices` with those inputs.
 4. Sign with `broadcast: true`.
 5. `POST /api/invoices/:id/submit` with the signed tx.
 
-Store the invoice id in localStorage so a reload can `GET /api/invoices/:id` and show "Already paid ✓".
+Use `payProPass` (above): it stores the invoice id in localStorage so a reload can `GET /api/invoices/:id` and show "Already paid ✓", and reuses the pinned inputs on retry.
 
 ## Mock-only behaviour
 
