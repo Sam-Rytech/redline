@@ -61,15 +61,16 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 - [ ] **Sam:** test login tx on Paytaca + Selene → **G1 by 11:00**, then **G3 by 14:00**
 - [ ] **Jadonamite:** Sign in screen (QR + "signed, not sent" explainer), My loans cards, Alerts screen, banner, footer, mobile layout
 - [ ] Deploy server (Railway) + web (Vercel) by 12:00 — even if ugly
-- [ ] **Claude:** Telegram bot (`/start <token>`, `/status`, `/mute`) + liquidation-band alerts → **G4 by 16:00**
-- [ ] **Claude:** BCH invoices (persisted inputs, retry reuses them, server confirms, Pro activates)
+- [x] **Claude:** Telegram bot (`/start <token>`, `/status`, `/mute`) + liquidation-band alerts (built + reviewed; live test needs bot token) → **G4 by 16:00**
+- [x] **Claude:** BCH invoices (persisted inputs, retry reuses them, server confirms, Pro activates; security-reviewed ×3; live test needs MERCHANT_ADDRESS + sats)
+- [x] **Claude:** deploy prep — Dockerfile, `railway.json`, `apps/server/.env.example`, `apps/login-demo/vercel.json`, `docs/DEPLOY.md`, README, LICENSE
 - [ ] 15:00 — final check-in stream (watch for last-minute rule notes)
 - [ ] **Sam:** outsider pays → **G5 by 21:00**; 3 testers → **G6 by 22:00**
 - [ ] Landing live counter ("N loans within 20% of liquidation")
 
 ### Sun 22 Nov — ship
 - [ ] 09:00–11:00 only bug fixes. **11:00 freeze** — no new features
-- [ ] README (setup, architecture, sign-in protocol)
+- [x] README (setup, architecture, sign-in protocol) — fill placeholders: live URL, slides link, CashTokens address
 - [ ] Record a 60–90 s demo video (optional but helps)
 - [ ] Complete DoraHacks BUIDL; tick Submission checklist → **G7**
 - [ ] **Submit by 13:00** (deadline 15:00)
@@ -139,6 +140,8 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 **Thu 19 Nov** — (no build work)
 
 **Fri 20 Nov** — Renamed to Redline; payment labelled "30-day Pro pass". Public repo created, jadonamite invited. Roles re-split and plan re-scoped. G-API done: api-types, risk metrics, mock API (`pnpm dev:mock`), docs/API.md merged to main. Added `GET /api/invoices/quote` (price before choosing inputs); duplicate watch → 409. TODO: verify `PARYON_APP_URL`. G2 done: live decode matches stats.paryonusd.com (140 active loans, 390,943.87 PUSD, 2,891.49 BCH). Facts confirmed: LE fields, PUSD 2 decimals, collateral = UTXO sats, rate = raw×365/1e5 % per year, price from PriceContractGuarded in cents. Found 54 debt-0 loans still holding 353 BCH (stranded) → new `strandedCount`/`strandedBch` in `/api/loans` summary.
+
+(Fri, late) Built on branches, not yet on main: `feat/signin` → `feat/alerts` → `feat/payment` (stacked; payment contains all). Security reviews found and fixed: change-path account takeover, broadcast-login hijack, SIGHASH_NONE reuse, false "loan gone" storm after restart, lost Telegram alerts, payment double-charge paths. Blockers for live tests: sats on a wallet receive address, bot token, MERCHANT_ADDRESS, Railway/Vercel. Selene: first wallet_ready has no paths (fixed in demo by re-reading on every wallet_ready); its receive address only holds a token coin → needs plain BCH. Jadonamite's `apps/web` not on GitHub yet.
 
 **Sat 21 Nov** —
 
