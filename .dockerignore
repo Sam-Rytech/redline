@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+.superpowers
+data
+**/data
+dist
+**/dist
+*.db
+*.sqlite
+.env
+.env.*
+!.env.example
