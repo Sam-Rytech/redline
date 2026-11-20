@@ -2,6 +2,7 @@
 // Electrum here; nothing the client sends about UTXOs is trusted.
 import { decodeTransaction, hashTransaction, hexToBin, lockingBytecodeToCashAddress } from "@bitauth/libauth";
 import type { Utxo } from "@redline/api-types";
+import { connectFirst, DEFAULT_ELECTRUM_HOSTS } from "@redline/paryon-decoder";
 import type { LoginOutpoint, SourceOutput } from "@redline/wizard-login/server";
 import { ElectrumNetworkProvider } from "cashscript";
 
@@ -64,26 +65,42 @@ const toUtxo = (address: string, u: ListUnspentItem): Utxo => ({
 });
 
 export function createElectrumChain(
-  opts: { hostname?: string; timeoutMs?: number; provider?: () => ProviderLike } = {},
+  opts: {
+    /** legacy single host; ignored when `hostnames` is given */
+    hostname?: string;
+    /** tried in order when a connect fails (default: DEFAULT_ELECTRUM_HOSTS) */
+    hostnames?: string[];
+    timeoutMs?: number;
+    connectTimeoutMs?: number;
+    provider?: (host: string) => ProviderLike;
+  } = {},
 ): Chain {
   const timeoutMs = opts.timeoutMs ?? ELECTRUM_TIMEOUT_MS;
+  const hosts = opts.hostnames ?? (opts.hostname ? [opts.hostname] : [...DEFAULT_ELECTRUM_HOSTS]);
   const makeProvider =
     opts.provider ??
-    (() =>
-      new ElectrumNetworkProvider(
-        "mainnet",
-        opts.hostname ? { hostname: opts.hostname, manualConnectionManagement: true } : { manualConnectionManagement: true },
-      ) as unknown as ProviderLike);
+    ((hostname: string) =>
+      new ElectrumNetworkProvider("mainnet", { hostname, manualConnectionManagement: true }) as unknown as ProviderLike);
 
   async function run<T>(what: string, fn: (p: ProviderLike) => Promise<T>): Promise<T> {
-    const p = makeProvider();
+    let p: ProviderLike | undefined; // the provider currently connecting / connected
+    const abort = new AbortController();
     const work = (async () => {
-      await p.connect();
+      ({ provider: p } = await connectFirst(
+        hosts,
+        (h) => (p = makeProvider(h)),
+        {
+          signal: abort.signal,
+          ...(opts.connectTimeoutMs !== undefined && { connectTimeoutMs: opts.connectTimeoutMs }),
+          log: (m) => console.log(m),
+        },
+      ));
+      const connected = p;
       try {
-        return await fn(p);
+        return await fn(connected);
       } finally {
         try {
-          await p.disconnect();
+          await connected.disconnect();
         } catch {
           // never mask the original error
         }
@@ -92,8 +109,9 @@ export function createElectrumChain(
     try {
       return await withTimeout(work, timeoutMs, what);
     } catch (e) {
+      abort.abort(); // stop trying further hosts
       // a hung connect/request must not leak the socket: close it, best effort
-      if (e instanceof Error && e.message.includes("timed out")) {
+      if (p && e instanceof Error && e.message.includes("timed out")) {
         try {
           await withTimeout(Promise.resolve(p.disconnect()), 2000, "disconnect");
         } catch {

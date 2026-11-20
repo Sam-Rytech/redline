@@ -94,4 +94,49 @@ describe("electrum chain", () => {
     await expect(chain.getSourceOutput({ txid: FUND, vout: 0 })).rejects.toThrow(/timed out/);
     expect(f.log.disconnects).toBeGreaterThanOrEqual(1);
   });
+
+  it("falls back to the next host when connect fails", async () => {
+    const f = fake();
+    const tried: string[] = [];
+    const chain = createElectrumChain({
+      hostnames: ["down.example", "up.example"],
+      provider: (host) => {
+        tried.push(host);
+        const p = f.provider();
+        return host === "down.example" ? { ...p, connect: async () => Promise.reject(new Error("ECONNREFUSED")) } : p;
+      },
+    });
+    const out = await chain.getSourceOutput({ txid: FUND, vout: 1 });
+    expect(out?.valueSatoshis).toBe(5678n);
+    expect(tried).toEqual(["down.example", "up.example"]);
+  });
+
+  it("does not fall back on a request error after connecting", async () => {
+    const tried: string[] = [];
+    const chain = createElectrumChain({
+      hostnames: ["a", "b"],
+      provider: (host) => {
+        tried.push(host);
+        return { ...fake().provider(), getRawTransaction: async () => Promise.reject(new Error("server busy")) };
+      },
+    });
+    await expect(chain.getSourceOutput({ txid: FUND, vout: 1 })).rejects.toThrow("server busy");
+    expect(tried).toEqual(["a"]);
+  });
+
+  it("stops trying further hosts after the overall timeout", async () => {
+    const tried: string[] = [];
+    const chain = createElectrumChain({
+      hostnames: ["a", "b", "c"],
+      timeoutMs: 20,
+      connectTimeoutMs: 15,
+      provider: (host) => {
+        tried.push(host);
+        return fake({ hang: true }).provider();
+      },
+    });
+    await expect(chain.getSourceOutput({ txid: FUND, vout: 0 })).rejects.toThrow(/timed out/);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(tried).toEqual(["a", "b"]);
+  });
 });

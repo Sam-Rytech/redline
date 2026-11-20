@@ -2,13 +2,118 @@ import { ElectrumNetworkProvider } from "cashscript";
 import { PARYON_ADDRESSES } from "./addresses.js";
 import { buildSnapshot, type ChainUtxo, type Snapshot } from "./snapshot.js";
 
-export async function fetchSnapshot(opts: { hostname?: string } = {}): Promise<Snapshot> {
-  const provider = new ElectrumNetworkProvider(
-    "mainnet",
-    opts.hostname ? { hostname: opts.hostname, manualConnectionManagement: true } : { manualConnectionManagement: true },
-  );
+/** Public Fulcrum servers (all verified answering Fulcrum 2.1.4 on wss :50004), tried in order. */
+export const DEFAULT_ELECTRUM_HOSTS: readonly string[] = [
+  "bch.imaginary.cash",
+  "electrum.imaginary.cash",
+  "bch.loping.net",
+  "fulcrum.greyh.at",
+  "electroncash.dk",
+];
+
+/** The host list to try: `first` (e.g. ELECTRUM_HOST) ahead of the defaults, without duplicates. */
+export function electrumHosts(first?: string): string[] {
+  const f = first?.trim();
+  return f ? [f, ...DEFAULT_ELECTRUM_HOSTS.filter((h) => h !== f)] : [...DEFAULT_ELECTRUM_HOSTS];
+}
+
+export const CONNECT_TIMEOUT_MS = 5_000;
+
+interface Connectable {
+  connect(): Promise<void>;
+  disconnect(): Promise<unknown>;
+}
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Connect to the first host that answers. A host whose connect fails or exceeds connectTimeoutMs is
+ * disconnected (best effort) and the next one is tried. Throws listing every host's error if all fail.
+ */
+export async function connectFirst<P extends Connectable>(
+  hosts: readonly string[],
+  make: (host: string) => P,
+  opts: { connectTimeoutMs?: number; log?: (msg: string) => void; signal?: AbortSignal } = {},
+): Promise<{ provider: P; host: string }> {
+  if (hosts.length === 0) throw new Error("no Electrum hosts configured");
+  const timeoutMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+  const errors: string[] = [];
+  for (const host of hosts) {
+    if (opts.signal?.aborted) throw new Error("connect aborted");
+    let provider: P | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      provider = make(host);
+      const pending = provider.connect();
+      pending.catch(() => {}); // a late failure after the timeout must not be unhandled
+      await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`connect timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+        }),
+      ]);
+      if (opts.signal?.aborted) {
+        provider.disconnect().catch(() => {});
+        throw new Error("connect aborted");
+      }
+      return { provider, host };
+    } catch (e) {
+      errors.push(`${host}: ${message(e)}`);
+      opts.log?.(`electrum ${host} unavailable (${message(e)}), trying next host`);
+      if (provider) {
+        // never wait on a hung socket; never mask the original error
+        try {
+          provider.disconnect().catch(() => {});
+        } catch {
+          // ignore
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(`all Electrum hosts failed: ${errors.join("; ")}`);
+}
+
+/** The slice of cashscript's ElectrumNetworkProvider fetchSnapshot uses (fakeable in tests). */
+export interface SnapshotProvider extends Connectable {
+  getUtxos(address: string): Promise<
+    Array<{
+      txid: string;
+      vout: number;
+      satoshis: bigint;
+      token?: {
+        category: string;
+        amount: bigint;
+        nft?: { capability: "none" | "mutable" | "minting"; commitment: string };
+      };
+    }>
+  >;
+  getBlockHeight(): Promise<number>;
+}
+
+export async function fetchSnapshot(
+  opts: {
+    /** legacy single host; ignored when `hostnames` is given */
+    hostname?: string;
+    /** tried in order on connection failure (default: DEFAULT_ELECTRUM_HOSTS) */
+    hostnames?: string[];
+    connectTimeoutMs?: number;
+    log?: (msg: string) => void;
+    /** for tests */
+    provider?: (host: string) => SnapshotProvider;
+  } = {},
+): Promise<Snapshot> {
+  const hosts = opts.hostnames ?? (opts.hostname ? [opts.hostname] : [...DEFAULT_ELECTRUM_HOSTS]);
+  const make =
+    opts.provider ??
+    ((hostname: string) =>
+      new ElectrumNetworkProvider("mainnet", { hostname, manualConnectionManagement: true }) as unknown as SnapshotProvider);
+  const { provider } = await connectFirst(hosts, make, {
+    ...(opts.connectTimeoutMs !== undefined && { connectTimeoutMs: opts.connectTimeoutMs }),
+    ...(opts.log && { log: opts.log }),
+  });
   try {
-    await provider.connect();
     const get = async (address: string): Promise<ChainUtxo[]> =>
       (await provider.getUtxos(address)).map((u) => ({
         txid: u.txid,
