@@ -1,80 +1,75 @@
 # Redline — Progress & Plan
 
 **Deadline:** Sun 22 Nov 2026, 15:00 Lagos (14:00 UTC). **Internal freeze: Sun 11:00 Lagos. Submit by 13:00.**
-**Team:** Dev A (Sam) — sign-in, payments, front end. Dev B (teammate) — Paryon decoder, chain reader, alerts, Telegram bot.
 All times are Lagos (UTC+1). Update this file at the end of every work block.
 
 Status legend: ⬜ not started · 🟨 in progress · ✅ done · ❌ failed/blocked
 
 ---
 
-## Hard gates
+## Team & roles (re-planned Fri 20 Nov)
 
-A gate is a yes/no check. **If a gate fails, stop and decide before building further.** Each has a fallback so a failure is a detour, not a dead end.
+| Who | Owns | Code |
+|---|---|---|
+| **Sam** (+ Claude Code building) | Back end, wallet protocol, Paryon data, alerts, payments; accounts, real-wallet testing, deploy, submission | `apps/server`, `packages/wizard-login`, `packages/paryon-decoder`, `packages/api-types` |
+| **Jadonamite** | Front end | `apps/web` |
 
-| # | Gate | Deadline | Pass condition | If it fails | Status |
-|---|---|---|---|---|---|
-| G0 | Accounts & funds | Tue 23:59 | Repo created; BUIDL draft created on DoraHacks; Paytaca + Selene installed, each with ~$0.50 BCH; Telegram bot token from @BotFather | Ask in BLAZE Telegram for a few cents (others have been tipped) | ⬜ |
-| G1 | `broadcast:false` honoured | Wed 13:00 | Paytaca **and** Selene return a signed tx without broadcasting it (tx not visible on an explorer after 2 min) | Switch sign-in to fallback mode (tiny real self-payment, ~300 sats). Note which wallet broadcasts in the README | ⬜ |
-| G2 | Loan decode matches | Wed 18:00 | For 5 live loans, decoded debt, collateral BCH, rate and liquidation price equal stats.paryonusd.com exactly | Fix units/endianness. If still wrong by Thu 12:00, ask in Paryon Telegram for the field units | ⬜ |
-| G3 | Sign-in works end to end | Thu 18:00 | Same wallet signs in on laptop and phone → same account. Reused nonce and expired nonce are rejected | Ship fallback mode only; keep going | ⬜ |
-| G4 | Real alert fired | Fri 15:00 | A Telegram alert is sent from real mainnet data (use a low test threshold on a real loan) | Cut rules down to liquidation-distance only | ⬜ |
-| G5 | Mainnet payment by an outsider | Fri 21:00 | Someone outside the team pays the Pro subscription on mainnet from their own wallet; Pro activates | BCH-only payment; PUSD payment becomes stretch | ⬜ |
-| G6 | Outside testers | Sat 18:00 | 3 people from the BLAZE group complete: open site → sign in or watch a loan → connect Telegram, without help | Fix the top 3 confusions before anything else | ⬜ |
-| G7 | Submission complete | Sun 13:00 | Every item in the Submission checklist below ticked | — | ⬜ |
+**Contract between the two:** `packages/api-types` (shared TypeScript types for every endpoint) + a **mock server** (`pnpm dev:mock`) serving realistic fixtures. Jadonamite builds every screen against the mock; we switch `VITE_API_BASE` to the real server when it's ready. **Changing a type = tell the other side in the team chat.**
+
+Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @BotFather token, funding Paytaca + Selene, Railway/Vercel accounts, wallet testing (G1/G3/G5), recruiting testers (G6), slides, submission.
 
 ---
 
-## Day-by-day plan
+## Scope cuts (we lost Tue–Thu)
 
-### Tue 17 Nov (tonight) — Day 0: setup
-- [x] **Both:** read ARCHITECTURE.md; name agreed: **Redline**
-- [ ] **A:** create GitHub repo (pnpm workspaces: `apps/web`, `apps/server`, `packages/wizard-login`, `packages/paryon-decoder`); first commit after 14 Nov ✔
-- [ ] **A:** create DoraHacks BUIDL draft now (3-BUIDL limit for new accounts)
-- [ ] **B:** create Telegram bot with @BotFather, keep the token private
-- [ ] **Both:** install Paytaca + Selene on phone; switch on CashTokens addresses; fund each with ~$0.50 BCH
-- [ ] **A:** copy the Widget Factory slides (File → Make a copy)
-- [ ] Gate **G0**
+- **Sign-in:** build verification so it accepts both outcomes (not broadcast, or broadcast-and-spent-by-this-tx). G1 becomes "which wallets broadcast" — informational, not blocking.
+- **Alerts:** only **liquidation distance** (bands + hysteresis) and **loan gone** are required. Redemption-queue, redemption-started, rate-change, stranded → stretch.
+- **Payment:** BCH only. PUSD payment → stretch.
+- **Free vs Pro:** Free = 1 watch; Pro = unlimited watches. Rule gating is dropped.
 
-### Wed 18 Nov — Day 1: prove the two risky assumptions
-Morning
-- [ ] **A:** minimal page: WizardConnect connect → show wallet name + derived receive addresses (pin `@wizardconnect/dapp` + `core` to the same exact version)
-- [ ] **A:** build the login tx (self-spend + OP_RETURN) with CashScript, send with `broadcast:false` → **G1** on Paytaca and Selene
-- [ ] **B:** compute the Loan contract address from `@paryonusd/contracts@1.1.0`; `listunspent` on Fulcrum; filter 27-byte `0x01` commitments
-Afternoon
-- [ ] **B:** decode fields; read collateral from UTXO sats; get price (price contract or oracles.cash) → **G2**
-- [ ] **A:** server skeleton (Hono + SQLite), `/auth/challenge`, `/auth/verify` with libauth VM verification
-- [ ] **Both:** 15-min sync at 19:00 — update gates table
-- [ ] Post Telegram intro in BLAZE group (no roll-call questions)
+---
 
-### Thu 19 Nov — Day 2: sign-in + loans
-- [ ] **A:** finish verification checks (domain, nonce, expiry, unused, address ↔ xpub, unspent-or-spent-by-this-tx); session cookie; `/me`
-- [ ] **A:** `packages/wizard-login` clean API + README with a 10-line usage example
-- [ ] **B:** chain reader on new blocks; `loan_snapshots`; metrics: CR, liq price, distance, debtAhead, redemptionInProgress, pendingRateChange, stranded
-- [ ] **B:** loan ↔ loan key mapping via sidecar (`vout+1`); `/me/loans` from the user's token UTXOs
-- [ ] **A:** web: Landing, Sign in, My loans cards, Watch any loan table
-- [ ] Deploy server (Railway) + web (Vercel) — even if ugly
-- [ ] **G3** by 18:00
-- [ ] Evening: post the `wizard-login` widget in the BLAZE group ("free for any WizardConnect app")
+## Hard gates (new deadlines)
 
-### Fri 20 Nov — Day 3: alerts + payment
-- [ ] **B:** Telegram linking (`/start <token>`), alert engine with bands + hysteresis, `/status` `/mute` → **G4** by 15:00
-- [ ] **A:** invoices: persist chosen inputs, build payment tx, `broadcast:true`, server confirms, Pro activates; retry reuses inputs ("Already paid ✓")
-- [ ] **A:** BCH payment first; PUSD payment only if BCH is done by 16:00
-- [ ] **G5** by 21:00 — ask one BLAZE builder to pay from their own wallet
-- [ ] **Both:** fix whatever broke in deploy
+| # | Gate | Owner | Deadline | Pass condition | If it fails | Status |
+|---|---|---|---|---|---|---|
+| G0 | Accounts & funds | Sam | Fri 16:00 | Repo ✅; jadonamite accepted invite; BUIDL draft on DoraHacks; Paytaca + Selene each ~$0.50 BCH; bot token | Ask in BLAZE Telegram for a few cents | 🟨 |
+| G-API | Front end unblocked | Claude | Fri 17:00 | `api-types` + mock server on `main`; jadonamite can `pnpm dev` the web app against it | — | ⬜ |
+| G2 | Loan decode matches | Claude | Fri 23:00 | For 5 live loans, decoded debt, collateral BCH, rate, liq price equal stats.paryonusd.com | Fix units/endianness; Sat 10:00 ask in Paryon Telegram | ⬜ |
+| G1 | `broadcast:false` behaviour known | Sam | Sat 11:00 | Know for Paytaca and Selene whether the login tx is broadcast | Already covered by fallback — just document it | ⬜ |
+| G3 | Sign-in works end to end | Sam + Claude | Sat 14:00 | Same wallet on laptop and phone → same account; reused/expired nonce rejected | Ship "Watch any loan" without sign-in; keep going | ⬜ |
+| G4 | Real alert fired | Claude | Sat 16:00 | Telegram alert from real mainnet data (low test threshold on a real loan) | Liquidation-distance only, no hysteresis | ⬜ |
+| G5 | Mainnet payment by an outsider | Sam | Sat 21:00 | Someone outside the team pays the Pro pass in BCH; Pro activates | Team-member payment + record it in the demo | ⬜ |
+| G6 | Outside testers | Sam | Sat 22:00 | 3 BLAZE people: open site → sign in or watch a loan → connect Telegram, without help | Fix top 3 confusions Sun morning | ⬜ |
+| G7 | Submission complete | Sam | Sun 13:00 | Every item in the Submission checklist ticked | — | ⬜ |
 
-### Sat 21 Nov — Day 4: polish + outside eyes
-- [ ] Ask 3 BLAZE builders to try it (offer to test theirs in return) → **G6** by 18:00
-- [ ] Fix top confusions; sign-in explainer text; empty states; mobile layout
-- [ ] Landing live counter ("N loans within 20% of liquidation")
-- [ ] Banner on every page (slides link, repo, `bitcoincash:z…` address, "no pre-hackathon code")
-- [ ] Finish Widget Factory slides
+---
+
+## Plan
+
+### Fri 20 Nov — today
+- [x] **Sam:** GitHub repo created (public), jadonamite invited
+- [ ] **Claude:** monorepo scaffold (pnpm workspaces, TS); `packages/api-types`; mock server with fixtures → **G-API by 17:00**
+- [ ] **Jadonamite:** accept invite; `apps/web` (Vite + React + Tailwind) against the mock; Landing + Watch any loan table
+- [ ] **Sam:** DoraHacks BUIDL draft; @BotFather token; fund Paytaca + Selene; copy Widget Factory slides → **G0**
+- [ ] **Claude:** decoder — Loan address from `@paryonusd/contracts@1.1.0`, Fulcrum `listunspent`, decode commitment, price → **G2 by 23:00**
+- [ ] **Sam:** create Railway + Vercel projects (connect the repo)
+
+### Sat 21 Nov
+- [ ] **Claude:** chain reader (per block) + real `/loans`; snapshot table
+- [ ] **Claude:** `wizard-login` client + `/auth/challenge`, `/auth/verify`, sessions, `/me`, `/me/loans` (sidecar mapping)
+- [ ] **Sam:** test login tx on Paytaca + Selene → **G1 by 11:00**, then **G3 by 14:00**
+- [ ] **Jadonamite:** Sign in screen (QR + "signed, not sent" explainer), My loans cards, Alerts screen, banner, footer, mobile layout
+- [ ] Deploy server (Railway) + web (Vercel) by 12:00 — even if ugly
+- [ ] **Claude:** Telegram bot (`/start <token>`, `/status`, `/mute`) + liquidation-band alerts → **G4 by 16:00**
+- [ ] **Claude:** BCH invoices (persisted inputs, retry reuses them, server confirms, Pro activates)
 - [ ] 15:00 — final check-in stream (watch for last-minute rule notes)
-- [ ] Post demo on X + BLAZE Telegram (word of mouth matters)
+- [ ] **Sam:** outsider pays → **G5 by 21:00**; 3 testers → **G6 by 22:00**
+- [ ] Landing live counter ("N loans within 20% of liquidation")
 
-### Sun 22 Nov — Day 5: ship
+### Sun 22 Nov — ship
 - [ ] 09:00–11:00 only bug fixes. **11:00 freeze** — no new features
+- [ ] README (setup, architecture, sign-in protocol)
 - [ ] Record a 60–90 s demo video (optional but helps)
 - [ ] Complete DoraHacks BUIDL; tick Submission checklist → **G7**
 - [ ] **Submit by 13:00** (deadline 15:00)
@@ -97,6 +92,7 @@ Afternoon
 
 ## Stretch (only after G7 items are safe)
 
+- [ ] Alert rules: redemption queue, redemption started, rate change pending, stranded collateral
 - [ ] PUSD subscription payment
 - [ ] Duplicate loan-key warning (needs a Chaingraph endpoint)
 - [ ] Interest-erosion projection ("at this rate your liq price rises to $X in 30 days")
@@ -108,13 +104,15 @@ Afternoon
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Wallets ignore `broadcast:false` | Medium | Low | Fallback self-payment sign-in (G1) |
-| Field units/endianness wrong | Medium | High | G2 on day 1; compare with stats site |
+| Field units/endianness wrong | Medium | High | G2 tonight; compare with stats site |
 | Collateral not equal to UTXO sats | Low | High | G2; fall back to sidecar/stats reading |
+| Front end blocked on back end | Medium | High | api-types + mock server first (G-API) |
+| API drift between web and server | Medium | Medium | One shared `api-types` package; announce changes |
+| Wallets ignore `broadcast:false` | Medium | Low | Verification accepts broadcast-and-spent-by-this-tx |
 | Price contract address unknown | Medium | Medium | oracles.cash fallback |
 | WizardConnect package churn | Medium | Medium | Exact version pins, commit lockfile |
 | Host sleeps, alerts stop | Medium | High | Always-on host (Railway/VM) |
-| Teammate availability | ? | High | Daily 19:00 sync; A can take over decoder (pure functions) |
+| Only ~45 h of build time | High | High | Scope cuts above; freeze Sun 11:00 |
 
 ---
 
@@ -127,6 +125,8 @@ Afternoon
 | 17 Nov | BCH payment before PUSD payment | Judges may not hold PUSD |
 | 20 Nov | Renamed to **Redline** | Avoids looking like an official Paryon product; "Canary" and "Watchtower" already taken in BTC/BCH |
 | 20 Nov | Payment is a one-time **30-day Pro pass**, not a recurring charge | It is the required mainnet tx and the "will it make money" proof; no auto-renew to build |
+| 20 Nov | Roles: Jadonamite = front end; Sam + Claude Code = everything else | Front end can run in parallel against a mock API |
+| 20 Nov | Scope cut to liquidation + loan-gone alerts, BCH-only payment; sign-in accepts broadcast or not | Nothing built by Fri; ~45 h left |
 
 ---
 
@@ -134,11 +134,11 @@ Afternoon
 
 **Tue 17 Nov** — Idea chosen, architecture written.
 
-**Wed 18 Nov** —
+**Wed 18 Nov** — (no build work)
 
-**Thu 19 Nov** —
+**Thu 19 Nov** — (no build work)
 
-**Fri 20 Nov** — Renamed to Redline; payment labelled "30-day Pro pass".
+**Fri 20 Nov** — Renamed to Redline; payment labelled "30-day Pro pass". Public repo created, jadonamite invited. Roles re-split and plan re-scoped.
 
 **Sat 21 Nov** —
 
