@@ -420,7 +420,8 @@ export function createApp(deps: AppDeps) {
     const w = db.getWatch(c.req.param("id"));
     if (!w || w.accountId !== a.id) return noWatch(c);
     const body = await readJson(c);
-    const rules = body && body.rules !== undefined ? parseRules(body.rules) : null;
+    // missing rules = no-op (same as the mock); present rules must be booleans
+    const rules = body ? parseRules(body.rules) : null;
     if (!rules) return badRequest(c, "Expected { rules } with boolean rules");
     db.updateWatchRules(w.id, a.id, { ...w.rules, ...rules });
     const row = db.getWatch(w.id);

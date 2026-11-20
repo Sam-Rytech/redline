@@ -161,7 +161,10 @@ describe("watch routes", () => {
     expect(s.db.getWatch(w.id)!.rules.liquidation).toBe(true);
     expect((await a("/api/watches/nope", { method: "PATCH", json: { rules: {} } })).status).toBe(404);
     expect((await a(`/api/watches/${w.id}`, { method: "PATCH", json: { rules: { liquidation: 1 } } })).status).toBe(400);
-    expect((await a(`/api/watches/${w.id}`, { method: "PATCH", json: {} })).status).toBe(400);
+    // no rules = no-op, same as the mock
+    const noop = await a(`/api/watches/${w.id}`, { method: "PATCH", json: {} });
+    expect(noop.status).toBe(200);
+    expect(noop.json<Watch>().rules).toEqual({ liquidation: true, loanGone: false });
   });
 
   it("DELETE own only; other user's watch is 404", async () => {

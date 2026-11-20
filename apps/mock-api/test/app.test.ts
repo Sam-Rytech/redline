@@ -100,6 +100,10 @@ describe("mock api", () => {
       await call(`/api/watches/${w.id}`, { method: "PATCH", body: JSON.stringify({ rules: { loanGone: false } }) })
     ).json()) as Watch;
     expect(p.rules).toEqual({ liquidation: true, loanGone: false });
+    // PATCH {} is a no-op, same as the real server
+    const noop = await call(`/api/watches/${w.id}`, { method: "PATCH", body: "{}" });
+    expect(noop.status).toBe(200);
+    expect(((await noop.json()) as Watch).rules).toEqual({ liquidation: true, loanGone: false });
     expect((await call(`/api/watches/${w.id}`, { method: "DELETE" })).status).toBe(200);
     expect(((await (await call("/api/watches")).json()) as Watch[]).length).toBe(0);
   });

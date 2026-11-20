@@ -56,13 +56,13 @@ All need a session (401 `unauthorized`). PATCH must send `Content-Type: applicat
 
 - `GET /api/watches` → `Watch[]` (yours, oldest first). `lastBand` is the band at the last alert check (`null` before the first check, and after the loan is gone).
 - `POST /api/watches { loanId, rules? }` → 201 `Watch`. 400 `bad_request` (missing/invalid `loanId`, non-boolean rules), 503 `not_ready` before chain data, 404 `not_found` if the loan is not in the current data, 409 `watch_exists`, 403 `watch_limit` (free plan = 1 watch; Pro = unlimited while `pro_until` is in the future). `rules` defaults to `{ liquidation: true, loanGone: true }`; partial rules are merged.
-- `PATCH /api/watches/:id { rules }` → `Watch` (partial merge). `DELETE /api/watches/:id` → `{ ok: true }`. Someone else's watch → 404 `not_found`.
+- `PATCH /api/watches/:id { rules }` → `Watch` (partial merge; `{}` is a no-op that returns the watch unchanged, on the mock too). `DELETE /api/watches/:id` → `{ ok: true }`. Someone else's watch → 404 `not_found`.
 - `POST /api/telegram/link-token {}` → `TelegramLinkResponse { token, url: "https://t.me/<bot>?start=<token>", expiresAt }`. Open `url`; the token is single use and valid 10 minutes (only its hash is stored). 503 `telegram_unavailable` when no bot is configured.
 - `POST /api/telegram/unlink {}` → `{ ok: true }`; `GET /api/me` `telegramLinked` reflects the link.
 
 Bot commands (private chat only): `/start <token>` links the chat (one chat per account), `/status` lists your watches (CR, distance, liquidation price, band, or "loan closed"), `/mute` (24 h; `/mute 2h`, `/mute 30m`, max 7 days), `/unmute`, `/help`.
 
-Alerts (checked after every successful refresh): **liquidation bands** — alert once when a loan enters a worse band (watch < 25 %, danger < 15 %, critical < 8 % from liquidation); the band is only re-armed after recovering 3 points past its threshold (e.g. danger → watch needs ≥ 18 %). A new watch is recorded silently unless it is already danger or critical. **Loan gone** — alert once when the loan disappears (closed, repaid or liquidated). Muted or unlinked accounts get no message, but the band still advances (no burst later). At most 20 messages per refresh, most severe first.
+Alerts (checked after every successful refresh): **liquidation bands** — alert once when a loan enters a worse band (watch < 25 %, danger < 15 %, critical < 8 % from liquidation); the band is only re-armed after recovering 3 points past its threshold (e.g. danger → watch needs ≥ 18 %). A new watch is recorded silently unless it is already danger or critical. **Loan gone** — alert once when a loan that was already checked is missing from two refreshes in a row (closed, repaid or liquidated); a restart never fires it on its first snapshot. Muted or unlinked accounts get no message, but the band still advances (no burst later). At most 20 messages per refresh, most severe first; the rest go out next refresh. A failed send is retried next refresh; if Telegram answers 403 (bot blocked or removed) the chat is unlinked.
 
 ## Sign-in (front end)
 
