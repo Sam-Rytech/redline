@@ -134,8 +134,8 @@ ui.copy.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(conn.qrUri);
     log("pairing URI copied");
-  } catch (e) {
-    log(`copy failed: ${describe(e)} — URI: ${conn.qrUri}`);
+  } catch {
+    log("copy failed — use the link above"); // never log the pairing URI
   }
 });
 
@@ -146,13 +146,14 @@ ui.signin.addEventListener("click", async () => {
   const c = conn;
   ui.signin.disabled = true;
   ui.result.hidden = true;
-  signing = new AbortController();
+  const ctrl = new AbortController();
+  signing = ctrl;
   let txid: string | null = null;
   try {
     const me = await wizardLogin({
       manager: c.manager,
       apiBase: API,
-      signal: signing.signal,
+      signal: ctrl.signal,
       onStep: (step, detail) => log(`step ${step}${detail ? ` — ${detail}` : ""}`),
       onSigned: (hex) => {
         txid = txidOf(hex);
@@ -162,7 +163,7 @@ ui.signin.addEventListener("click", async () => {
     log("signed in");
     showResult(me, txid);
   } catch (e) {
-    log(`sign-in failed: ${describe(e)}`);
+    log(ctrl.signal.aborted ? "Sign-in cancelled (wallet disconnected)" : `sign-in failed: ${describe(e)}`);
     if (txid) showResult(null, txid);
   } finally {
     signing = null;
