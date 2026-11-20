@@ -27,7 +27,8 @@ import {
 } from "@redline/wizard-login/server";
 import type { ServerConfig } from "./config.js";
 import type { AccountRow, Db, WatchRow } from "./db.js";
-import { addressFor, type Chain } from "./electrum.js";
+import { addressFor, type Chain, type PaymentChain } from "./electrum.js";
+import { ChainUnavailable, createInvoices, type InvoiceResult } from "./invoices.js";
 import type { ChainReader } from "./reader.js";
 import { tokenHash } from "./tokens.js";
 
@@ -86,6 +87,8 @@ export interface AppDeps {
   now?: () => Date;
   /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
   botUsername?: () => string | undefined;
+  /** Pro pass payments (MERCHANT_ADDRESS set); without it the invoice routes answer 503 payments_unavailable */
+  payments?: { merchantAddress: string; chain: PaymentChain };
 }
 
 export function createApp(deps: AppDeps) {
@@ -157,6 +160,9 @@ export function createApp(deps: AppDeps) {
   };
   app.use("/auth/*", rateLimit);
   app.use("/utxos", rateLimit);
+  // invoice routes call Electrum several times per request
+  app.use("/invoices", rateLimit);
+  app.use("/invoices/*", rateLimit);
 
   // ---------- POST hardening (CSRF + size) ----------
   const limitBody = bodyLimit({
@@ -434,6 +440,55 @@ export function createApp(deps: AppDeps) {
     if (!db.deleteWatch(c.req.param("id"), a.id)) return noWatch(c);
     const res: OkResponse = { ok: true };
     return c.json(res);
+  });
+
+  // ---------- invoices (30-day Pro pass) ----------
+  const invoices = deps.payments
+    ? createInvoices({ db, chain: deps.payments.chain, merchantAddress: deps.payments.merchantAddress, now: nowSec })
+    : null;
+  const noPayments = (c: Context) => c.json(err("payments_unavailable", "Payments are not configured on this server"), 503);
+  const invoiceReply = async (c: Context, run: () => Promise<InvoiceResult>) => {
+    try {
+      const r = await run();
+      return c.json(r.body, r.status);
+    } catch (e) {
+      if (e instanceof ChainUnavailable) return chainDown(c, e);
+      throw e;
+    }
+  };
+
+  app.get("/invoices/quote", (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    if (!invoices) return noPayments(c);
+    const s = reader.current();
+    if (!s) return notReady(c);
+    return c.json(invoices.quote(s.priceUsd));
+  });
+
+  app.post("/invoices", async (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    if (!invoices) return noPayments(c);
+    const s = reader.current();
+    if (!s) return notReady(c);
+    const body = await readJson(c);
+    return invoiceReply(c, () => invoices.create(a, body, s.priceUsd));
+  });
+
+  app.get("/invoices/:id", async (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    if (!invoices) return noPayments(c);
+    return invoiceReply(c, () => invoices.get(a, c.req.param("id")));
+  });
+
+  app.post("/invoices/:id/submit", async (c) => {
+    const a = sessionAccount(c);
+    if (!a) return unauthorized(c);
+    if (!invoices) return noPayments(c);
+    const body = await readJson(c);
+    return invoiceReply(c, () => invoices.submit(a, c.req.param("id"), body));
   });
 
   // ---------- telegram ----------

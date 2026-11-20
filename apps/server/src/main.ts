@@ -37,7 +37,15 @@ if (telegram) {
 }
 reader.start();
 
-const app = createApp({ reader, db, chain, config, botUsername: () => telegram?.username() });
+if (!config.merchantAddress) console.log("MERCHANT_ADDRESS not set: Pro pass payments are off (invoice routes answer 503)");
+const app = createApp({
+  reader,
+  db,
+  chain,
+  config,
+  botUsername: () => telegram?.username(),
+  ...(config.merchantAddress && { payments: { merchantAddress: config.merchantAddress, chain } }),
+});
 const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`Redline API on http://localhost:${port}/api (login domain ${config.loginDomain})`);
 });

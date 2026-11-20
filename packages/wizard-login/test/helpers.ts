@@ -76,7 +76,32 @@ export function signP2pkhInput0(
   return { ...tx, inputs: [{ ...input, unlockingBytecode }, ...rest] };
 }
 
-export const FUNDING_TXID = "11".repeat(31) + "ab";
+/** Sign every input (all P2PKH, SIGHASH_ALL|FORKID, Schnorr) like a wallet would; `keys[i]` signs input i. */
+export function signP2pkhInputs(
+  tx: TransactionCommon,
+  sources: ReadonlyArray<{ lockingBytecode: Uint8Array; valueSatoshis: bigint; token?: never }>,
+  keys: readonly Uint8Array[],
+): TransactionCommon {
+  const sourceOutputs = sources.map((s) => ({ lockingBytecode: s.lockingBytecode, valueSatoshis: s.valueSatoshis }));
+  const inputs = tx.inputs.map((input, inputIndex) => {
+    const key = keys[inputIndex];
+    const source = sourceOutputs[inputIndex];
+    if (!key || !source) throw new Error(`no key/source for input ${inputIndex}`);
+    const pub = secp256k1.derivePublicKeyCompressed(key);
+    if (typeof pub === "string") throw new Error(pub);
+    const serialization = generateSigningSerializationBCH(
+      { inputIndex, sourceOutputs, transaction: tx },
+      { coveredBytecode: source.lockingBytecode, signingSerializationType: Uint8Array.of(SIGHASH_ALL_FORKID) },
+    );
+    const sig = secp256k1.signMessageHashSchnorr(key, sha256.hash(sha256.hash(serialization)));
+    if (typeof sig === "string") throw new Error(sig);
+    const unlockingBytecode = flattenBinArray([encodeDataPush(flattenBinArray([sig, Uint8Array.of(SIGHASH_ALL_FORKID)])), encodeDataPush(pub)]);
+    return { ...input, unlockingBytecode };
+  });
+  return { ...tx, inputs };
+}
+
+export const FUNDING_TXID ="11".repeat(31) + "ab";
 
 export interface LoginTxOptions {
   wallet: TestWallet;

@@ -158,4 +158,55 @@ describe("db", () => {
       expect(db.alertsFor("w1")).toEqual([{ watchId: "w1", rule: "liquidation", value: "danger", sentAt: 50 }]);
     });
   });
+
+  describe("invoices", () => {
+    const inv = (id: string, accountId = "acc", createdAt = 100) => ({
+      id, accountId, asset: "BCH" as const, amountSats: 62_500, merchantLockingHex: "76a914" + "22".repeat(20) + "88ac",
+      inputs: [{ txid: "ab".repeat(32), vout: 1 }, { txid: "cd".repeat(32), vout: 0 }], createdAt, expiresAt: createdAt + 1800,
+    });
+
+    it("insert, get, list newest first; expire only an open one", () => {
+      const db = openDb(":memory:");
+      db.insertInvoice(inv("i1"));
+      db.insertInvoice(inv("i2", "acc", 200));
+      db.insertInvoice(inv("i3", "other"));
+      expect(db.getInvoice("i1")).toEqual({ ...inv("i1"), txid: null, status: "open", paidAt: null });
+      expect(db.getInvoice("nope")).toBeNull();
+      expect(db.listInvoices("acc").map((r) => r.id)).toEqual(["i2", "i1"]);
+      expect(db.expireInvoice("i1")).toBe(true);
+      expect(db.expireInvoice("i1")).toBe(false);
+      expect(db.getInvoice("i1")!.status).toBe("expired");
+    });
+
+    it("markInvoicePaid is once-only and stacks Pro from max(paidAt, pro_until)", () => {
+      const db = openDb(":memory:");
+      db.upsertAccount({ id: "acc", xpubReceive: "xr", xpubChange: "xc", now: 1 });
+      db.insertInvoice(inv("i1"));
+      db.insertInvoice(inv("i2"));
+      expect(db.markInvoicePaid("i1", "ee".repeat(32), 1000, 30)).toBe(true);
+      expect(db.getAccount("acc")!.proUntil).toBe(1030);
+      expect(db.getInvoice("i1")).toMatchObject({ status: "paid", txid: "ee".repeat(32), paidAt: 1000 });
+      // second time: no change, Pro not extended again
+      expect(db.markInvoicePaid("i1", "ee".repeat(32), 1005, 30)).toBe(false);
+      expect(db.getAccount("acc")!.proUntil).toBe(1030);
+      // another invoice paid while Pro is still running stacks on pro_until
+      db.expireInvoice("i2"); // an expired invoice can still be marked paid (the money is on chain)
+      expect(db.markInvoicePaid("i2", "ff".repeat(32), 1010, 30)).toBe(true);
+      expect(db.getAccount("acc")!.proUntil).toBe(1060);
+      // the same txid cannot pay two invoices
+      db.insertInvoice(inv("i3"));
+      expect(() => db.markInvoicePaid("i3", "ff".repeat(32), 1020, 30)).toThrow();
+      expect(db.getInvoice("i3")!.status).toBe("open");
+      expect(db.getAccount("acc")!.proUntil).toBe(1060);
+    });
+
+    it("Pro starts from paidAt when pro_until is in the past", () => {
+      const db = openDb(":memory:");
+      db.upsertAccount({ id: "acc", xpubReceive: "xr", xpubChange: "xc", now: 1 });
+      db.setProUntil("acc", 500);
+      db.insertInvoice(inv("i1"));
+      expect(db.markInvoicePaid("i1", "ee".repeat(32), 1000, 30)).toBe(true);
+      expect(db.getAccount("acc")!.proUntil).toBe(1030);
+    });
+  });
 });

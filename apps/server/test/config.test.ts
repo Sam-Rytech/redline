@@ -64,4 +64,16 @@ describe("parseConfig", () => {
     expect(parseConfig({ PUBLIC_ORIGIN: " " }).publicOrigin).toBeUndefined();
     expect(parseConfig({ LOGIN_DOMAIN: " ", DB_PATH: "" })).toMatchObject({ loginDomain: "localhost", dbPath: "./data/redline.db" });
   });
+  it("MERCHANT_ADDRESS: a mainnet cashaddr (z/q/p/r), trimmed; anything else throws", () => {
+    const z = "bitcoincash:zq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygyzxn9ta6";
+    const q = "bitcoincash:qq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygrg4dtdzf";
+    const r = "bitcoincash:rqenxvenxvenxvenxvenxvenxvenxvenxvr96ydd40";
+    expect(parseConfig({ MERCHANT_ADDRESS: ` ${z} ` }).merchantAddress).toBe(z);
+    expect(parseConfig({ MERCHANT_ADDRESS: q }).merchantAddress).toBe(q);
+    expect(parseConfig({ MERCHANT_ADDRESS: r }).merchantAddress).toBe(r);
+    expect(parseConfig({ MERCHANT_ADDRESS: " " }).merchantAddress).toBeUndefined();
+    for (const bad of ["zq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygyzxn9ta6", "bitcoincash:zq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygyzxn9ta7", "bchtest:qq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygrg4dtdzf", "hello"]) {
+      expect(() => parseConfig({ MERCHANT_ADDRESS: bad }), bad).toThrow(/MERCHANT_ADDRESS/);
+    }
+  });
 });

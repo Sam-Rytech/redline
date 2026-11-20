@@ -1,7 +1,7 @@
 // Chain access for sign-in and wallet views. Everything security-relevant is read from
 // Electrum here; nothing the client sends about UTXOs is trusted.
-import { decodeTransaction, hashTransaction, hexToBin, lockingBytecodeToCashAddress } from "@bitauth/libauth";
-import type { Utxo } from "@redline/api-types";
+import { binToHex, decodeTransaction, hashTransaction, hexToBin, lockingBytecodeToCashAddress, sha256 } from "@bitauth/libauth";
+import type { Outpoint, Utxo } from "@redline/api-types";
 import { connectFirst, createHostRotation, DEFAULT_ELECTRUM_HOSTS } from "@redline/paryon-decoder";
 import type { LoginOutpoint, SourceOutput } from "@redline/wizard-login/server";
 import { ElectrumNetworkProvider } from "cashscript";
@@ -12,6 +12,26 @@ export interface Chain {
   /** true when the outpoint is still unspent, or the transaction `txid` is known to the node */
   isUnspentOrSpentBy(outpoint: LoginOutpoint, txid: string): Promise<boolean>;
   getUtxos(addresses: string[]): Promise<Utxo[]>;
+}
+
+export interface OutputState {
+  output: SourceOutput;
+  /** false once a transaction (confirmed or in the mempool) spends it */
+  unspent: boolean;
+}
+
+export type BroadcastResult = { ok: true } | { ok: false; message: string };
+
+/** Chain access for Pro pass payments. */
+export interface PaymentChain {
+  /** per outpoint (same order): the output and whether it is unspent; null when the tx/output does not exist */
+  getOutputs(outpoints: Outpoint[]): Promise<Array<OutputState | null>>;
+  /** blockchain.transaction.broadcast; a node rejection resolves { ok: false, message } (connection failures throw) */
+  broadcast(txHex: string): Promise<BroadcastResult>;
+  /** raw transaction (verified to hash to txid), null when the node does not know it */
+  getTransaction(txid: string): Promise<Uint8Array | null>;
+  /** up to `limit` transactions touching a locking bytecode: mempool first, then newest blocks */
+  recentTransactions(lockingBytecode: Uint8Array, limit: number): Promise<Uint8Array[]>;
 }
 
 /** The slice of cashscript's ElectrumNetworkProvider we use (fakeable in tests). */
@@ -74,7 +94,7 @@ export function createElectrumChain(
     connectTimeoutMs?: number;
     provider?: (host: string) => ProviderLike;
   } = {},
-): Chain {
+): Chain & PaymentChain {
   const timeoutMs = opts.timeoutMs ?? ELECTRUM_TIMEOUT_MS;
   const hosts = opts.hostnames ?? (opts.hostname ? [opts.hostname] : [...DEFAULT_ELECTRUM_HOSTS]);
   // start at the last host that answered; move past a host that failed or stalled
@@ -164,6 +184,49 @@ export function createElectrumChain(
         }
         // our own login tx made it to the node (wallet broadcast it anyway)
         return (await rawTx(p, txid)) !== null;
+      }),
+
+    getOutputs: (outpoints) =>
+      run("getOutputs", async (p) => {
+        const unspentByLock = new Map<string, Promise<Array<{ txid: string; vout: number }>>>();
+        const out: Array<OutputState | null> = [];
+        for (const op of outpoints) {
+          const src = await sourceOutput(p, op);
+          if (!src) {
+            out.push(null);
+            continue;
+          }
+          const key = binToHex(src.lockingBytecode);
+          let list = unspentByLock.get(key);
+          if (!list) unspentByLock.set(key, (list = p.getUtxosForLockingBytecode(src.lockingBytecode)));
+          const unspent = (await list).some((u) => u.txid === op.txid && u.vout === op.vout);
+          out.push({ output: src, unspent });
+        }
+        return out;
+      }),
+
+    broadcast: (txHex) =>
+      run("broadcast", async (p): Promise<BroadcastResult> => {
+        try {
+          await p.performRequest("blockchain.transaction.broadcast", txHex);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, message: e instanceof Error ? e.message : String(e) };
+        }
+      }),
+
+    getTransaction: (txid) => run("getTransaction", (p) => rawTx(p, txid)),
+
+    recentTransactions: (lockingBytecode, limit) =>
+      run("recentTransactions", async (p) => {
+        const scripthash = binToHex(sha256.hash(lockingBytecode).reverse());
+        const history = (await p.performRequest("blockchain.scripthash.get_history", scripthash)) as Array<{ tx_hash: string; height: number }>;
+        if (!Array.isArray(history)) throw new Error("Unexpected get_history response");
+        // mempool entries have height 0 or -1
+        const rank = (h: number) => (Number(h) > 0 ? Number(h) : Number.MAX_SAFE_INTEGER);
+        const ids = [...history].sort((a, b) => rank(b.height) - rank(a.height)).slice(0, limit).map((h) => h.tx_hash);
+        const txs = await Promise.all(ids.map((id) => rawTx(p, id)));
+        return txs.filter((t): t is Uint8Array => t !== null);
       }),
 
     getUtxos: (addresses) =>

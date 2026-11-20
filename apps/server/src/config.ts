@@ -1,3 +1,5 @@
+import { cashAddressToLockingBytecode } from "@bitauth/libauth";
+
 export interface ServerConfig {
   port: number;
   refreshMs: number;
@@ -25,6 +27,11 @@ export interface ServerConfig {
   telegramBotToken: string | undefined;
   /** BOT_USERNAME (without @); when unset the bot asks Telegram (getMe) at startup */
   botUsername: string | undefined;
+  /**
+   * MERCHANT_ADDRESS: where Pro pass payments go (a mainnet `bitcoincash:` cashaddr; token-aware z… preferred).
+   * Receive-only: the server never holds its key. Unset → invoice routes answer 503 payments_unavailable.
+   */
+  merchantAddress: string | undefined;
 }
 
 const positive = (v: string | undefined, fallback: number, min = 0): number => {
@@ -44,6 +51,14 @@ function parseHops(env: Record<string, string | undefined>): number {
   return ["true", "1"].includes(env.TRUST_PROXY?.trim().toLowerCase() ?? "") ? 1 : 0;
 }
 
+function parseMerchant(raw: string | undefined): string | undefined {
+  const v = raw?.trim();
+  if (!v) return undefined;
+  const d = v.startsWith("bitcoincash:") ? cashAddressToLockingBytecode(v) : "missing the bitcoincash: prefix";
+  if (typeof d === "string") throw new Error(`MERCHANT_ADDRESS must be a mainnet bitcoincash: address (${d})`);
+  return v;
+}
+
 export function parseConfig(env: Record<string, string | undefined>): ServerConfig {
   const origin = env.PUBLIC_ORIGIN?.trim();
   return {
@@ -59,5 +74,6 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     publicOrigin: origin ? origin.replace(/\/+$/, "") : undefined,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN?.trim() || undefined,
     botUsername: env.BOT_USERNAME?.trim().replace(/^@/, "") || undefined,
+    merchantAddress: parseMerchant(env.MERCHANT_ADDRESS),
   };
 }

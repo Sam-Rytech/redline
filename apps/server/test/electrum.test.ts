@@ -1,4 +1,4 @@
-import { binToHex, encodeTransaction, hashTransaction, hexToBin } from "@bitauth/libauth";
+import { binToHex, encodeTransaction, hashTransaction, hexToBin, sha256 } from "@bitauth/libauth";
 import { describe, expect, it } from "vitest";
 import { createElectrumChain, type ProviderLike } from "../src/electrum.js";
 
@@ -14,7 +14,7 @@ const fundingTx = encodeTransaction({
 });
 const FUND = hashTransaction(fundingTx);
 
-function fake(o: { txs?: Record<string, string>; unspent?: Array<{ txid: string; vout: number }>; hang?: boolean; listunspent?: unknown } = {}) {
+function fake(o: { txs?: Record<string, string>; unspent?: Array<{ txid: string; vout: number }>; hang?: boolean; listunspent?: unknown; perform?: (name: string, ...params: unknown[]) => unknown } = {}) {
   const log = { connects: 0, disconnects: 0 };
   const provider = (): ProviderLike => ({
     async connect() {
@@ -33,7 +33,8 @@ function fake(o: { txs?: Record<string, string>; unspent?: Array<{ txid: string;
     async getUtxosForLockingBytecode() {
       return o.unspent ?? [];
     },
-    async performRequest() {
+    async performRequest(name, ...params) {
+      if (o.perform) return o.perform(name, ...params);
       return o.listunspent ?? [];
     },
   });
@@ -155,5 +156,73 @@ describe("electrum chain", () => {
     expect((await chain.getSourceOutput({ txid: FUND, vout: 1 }))?.valueSatoshis).toBe(5678n);
     await chain.getSourceOutput({ txid: FUND, vout: 1 });
     expect(tried).toEqual(["a", "b", "b"]);
+  });
+
+  describe("payment helpers", () => {
+    const LOCK2 = hexToBin("76a914" + "44".repeat(20) + "88ac");
+    const txPaying = (n: number) =>
+      encodeTransaction({
+        version: 2,
+        locktime: 0,
+        inputs: [{ outpointTransactionHash: hexToBin(FUND), outpointIndex: n, sequenceNumber: 0xffffffff, unlockingBytecode: new Uint8Array() }],
+        outputs: [{ lockingBytecode: LOCK2, valueSatoshis: BigInt(1000 + n) }],
+      });
+
+    it("getOutputs: output + unspent flag per outpoint, null when missing, one connection", async () => {
+      const f = fake({ unspent: [{ txid: FUND, vout: 1 }] });
+      const chain = createElectrumChain({ provider: f.provider });
+      const r = await chain.getOutputs([{ txid: FUND, vout: 0 }, { txid: FUND, vout: 1 }, { txid: FUND, vout: 5 }, { txid: "ab".repeat(32), vout: 0 }]);
+      expect(r.map((x) => x && { unspent: x.unspent, value: x.output.valueSatoshis })).toEqual([
+        { unspent: false, value: 1234n },
+        { unspent: true, value: 5678n },
+        null,
+        null,
+      ]);
+      expect(f.log.connects).toBe(1);
+    });
+
+    it("broadcast: ok, or the node's rejection message (not thrown)", async () => {
+      const sent: unknown[] = [];
+      const ok = createElectrumChain({ provider: fake({ perform: (name, hex) => (sent.push([name, hex]), "ab".repeat(32)) }).provider });
+      expect(await ok.broadcast("0011")).toEqual({ ok: true });
+      expect(sent).toEqual([["blockchain.transaction.broadcast", "0011"]]);
+      const bad = createElectrumChain({
+        provider: fake({
+          perform: () => {
+            throw new Error("the transaction was rejected by network rules. missing-inputs");
+          },
+        }).provider,
+      });
+      expect(await bad.broadcast("0011")).toEqual({ ok: false, message: "the transaction was rejected by network rules. missing-inputs" });
+    });
+
+    it("getTransaction: verified bytes or null", async () => {
+      const chain = createElectrumChain({ provider: fake().provider });
+      expect(binToHex((await chain.getTransaction(FUND))!)).toBe(binToHex(fundingTx));
+      expect(await chain.getTransaction("ab".repeat(32))).toBeNull();
+    });
+
+    it("recentTransactions: scripthash history, mempool first then newest blocks, capped", async () => {
+      const txs = [0, 1, 2, 3].map(txPaying);
+      const ids = txs.map((t) => hashTransaction(t));
+      const asked: unknown[] = [];
+      const chain = createElectrumChain({
+        provider: fake({
+          txs: Object.fromEntries(ids.map((id, i) => [id, binToHex(txs[i]!)])),
+          perform: (name, sh) => {
+            asked.push([name, sh]);
+            return [
+              { tx_hash: ids[0], height: 100 },
+              { tx_hash: ids[1], height: 300 },
+              { tx_hash: ids[2], height: 0, fee: 300 },
+              { tx_hash: ids[3], height: 200 },
+            ];
+          },
+        }).provider,
+      });
+      const got = await chain.recentTransactions(LOCK2, 3);
+      expect(got.map((b) => hashTransaction(b))).toEqual([ids[2], ids[1], ids[3]]);
+      expect(asked).toEqual([["blockchain.scripthash.get_history", binToHex(sha256.hash(LOCK2).reverse())]]);
+    });
   });
 });

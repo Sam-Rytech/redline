@@ -3,7 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { RiskBand, WatchRules } from "@redline/api-types";
+import type { InvoiceStatus, Outpoint, RiskBand, WatchRules } from "@redline/api-types";
 import type { StoredChallenge } from "@redline/wizard-login/server";
 
 export interface AccountRow {
@@ -32,6 +32,24 @@ export interface TelegramChatRow {
   chatId: string;
   linkedAt: number;
   mutedUntil: number | null;
+}
+
+export interface InvoiceRow {
+  /** 16 random bytes, hex */
+  id: string;
+  accountId: string;
+  asset: "BCH";
+  amountSats: number;
+  /** where the payment must go (fixed at creation, so a later MERCHANT_ADDRESS change cannot break it) */
+  merchantLockingHex: string;
+  /** the inputs the paying transaction must spend, exactly */
+  inputs: Outpoint[];
+  txid: string | null;
+  /** as stored: an "open" row past expiresAt is expired in the API */
+  status: InvoiceStatus;
+  createdAt: number;
+  expiresAt: number;
+  paidAt: number | null;
 }
 
 export interface Db {
@@ -70,6 +88,19 @@ export interface Db {
   setChatMute(chatId: string, mutedUntil: number | null): void;
   unlinkTelegram(accountId: string): boolean;
 
+  insertInvoice(i: Omit<InvoiceRow, "txid" | "status" | "paidAt">): void;
+  getInvoice(id: string): InvoiceRow | null;
+  /** newest first */
+  listInvoices(accountId: string): InvoiceRow[];
+  /** open → expired; false when it was not open */
+  expireInvoice(id: string): boolean;
+  /**
+   * Atomic: mark a not-yet-paid invoice paid and extend its account's Pro to
+   * max(paidAt, pro_until) + proSeconds. False (and nothing changes) when it was already paid.
+   * Throws when `txid` already paid another invoice.
+   */
+  markInvoicePaid(id: string, txid: string, paidAt: number, proSeconds: number): boolean;
+
   recordAlert(watchId: string, rule: string, value: string, sentAt: number): void;
   alertsFor(watchId: string): Array<{ watchId: string; rule: string; value: string; sentAt: number }>;
   close(): void;
@@ -95,6 +126,11 @@ CREATE TABLE IF NOT EXISTS telegram_chats (
   account_id TEXT PRIMARY KEY, chat_id TEXT, linked_at INTEGER, muted_until INTEGER NULL
 );
 CREATE INDEX IF NOT EXISTS telegram_chats_chat ON telegram_chats(chat_id);
+CREATE TABLE IF NOT EXISTS invoices (
+  id TEXT PRIMARY KEY, account_id TEXT, asset TEXT, amount_sats INTEGER, merchant_locking_hex TEXT, inputs_json TEXT,
+  txid TEXT NULL UNIQUE, status TEXT, created_at INTEGER, expires_at INTEGER, paid_at INTEGER NULL
+);
+CREATE INDEX IF NOT EXISTS invoices_account ON invoices(account_id, created_at);
 CREATE TABLE IF NOT EXISTS alerts_sent (
   id INTEGER PRIMARY KEY AUTOINCREMENT, watch_id TEXT, rule TEXT, value TEXT, sent_at INTEGER
 );
@@ -115,6 +151,25 @@ const toWatch = (r: Row): WatchRow => ({
   mutedUntil: numOrNull(r.muted_until),
   createdAt: num(r.created_at),
 });
+
+const STATUSES: ReadonlySet<string> = new Set(["open", "paid", "expired"]);
+
+const toInvoice = (r: Row): InvoiceRow => {
+  const inputs = JSON.parse(str(r.inputs_json)) as Outpoint[];
+  return {
+    id: str(r.id),
+    accountId: str(r.account_id),
+    asset: "BCH",
+    amountSats: num(r.amount_sats),
+    merchantLockingHex: str(r.merchant_locking_hex),
+    inputs: inputs.map((o) => ({ txid: String(o.txid), vout: Number(o.vout) })),
+    txid: r.txid === null || r.txid === undefined ? null : str(r.txid),
+    status: STATUSES.has(str(r.status)) ? (str(r.status) as InvoiceStatus) : "expired",
+    createdAt: num(r.created_at),
+    expiresAt: num(r.expires_at),
+    paidAt: numOrNull(r.paid_at),
+  };
+};
 
 export function openDb(path: string): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -169,6 +224,17 @@ export function openDb(path: string): Db {
     chatAccount: db.prepare(`SELECT account_id FROM telegram_chats WHERE chat_id = ?`),
     setChatMute: db.prepare(`UPDATE telegram_chats SET muted_until = ? WHERE chat_id = ?`),
     deleteChat: db.prepare(`DELETE FROM telegram_chats WHERE account_id = ?`),
+    insertInvoice: db.prepare(
+      `INSERT INTO invoices (id, account_id, asset, amount_sats, merchant_locking_hex, inputs_json, txid, status, created_at, expires_at, paid_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, 'open', ?, ?, NULL)`,
+    ),
+    getInvoice: db.prepare(`SELECT * FROM invoices WHERE id = ?`),
+    listInvoices: db.prepare(`SELECT * FROM invoices WHERE account_id = ? ORDER BY created_at DESC, rowid DESC`),
+    expireInvoice: db.prepare(`UPDATE invoices SET status = 'expired' WHERE id = ? AND status = 'open'`),
+    payInvoice: db.prepare(
+      `UPDATE invoices SET status = 'paid', txid = ?, paid_at = ? WHERE id = ? AND status <> 'paid' RETURNING account_id`,
+    ),
+    extendPro: db.prepare(`UPDATE accounts SET pro_until = MAX(?, COALESCE(pro_until, 0)) + ? WHERE id = ?`),
     recordAlert: db.prepare(`INSERT INTO alerts_sent (watch_id, rule, value, sent_at) VALUES (?, ?, ?, ?)`),
     alertsFor: db.prepare(`SELECT * FROM alerts_sent WHERE watch_id = ? ORDER BY id`),
   };
@@ -294,6 +360,31 @@ export function openDb(path: string): Db {
     },
     unlinkTelegram(accountId) {
       return Number(q.deleteChat.run(accountId).changes) === 1;
+    },
+    insertInvoice(i) {
+      q.insertInvoice.run(i.id, i.accountId, i.asset, i.amountSats, i.merchantLockingHex, JSON.stringify(i.inputs), i.createdAt, i.expiresAt);
+    },
+    getInvoice(id) {
+      const r = q.getInvoice.get(id) as Row | undefined;
+      return r ? toInvoice(r) : null;
+    },
+    listInvoices(accountId) {
+      return (q.listInvoices.all(accountId) as Row[]).map(toInvoice);
+    },
+    expireInvoice(id) {
+      return Number(q.expireInvoice.run(id).changes) === 1;
+    },
+    markInvoicePaid(id, txid, paidAt, proSeconds) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const r = q.payInvoice.get(txid, paidAt, id) as Row | undefined;
+        if (r) q.extendPro.run(paidAt, proSeconds, str(r.account_id));
+        db.exec("COMMIT");
+        return r !== undefined;
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
     },
     recordAlert(watchId, rule, value, sentAt) {
       q.recordAlert.run(watchId, rule, value, sentAt);
