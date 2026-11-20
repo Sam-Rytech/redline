@@ -268,6 +268,31 @@ describe("invoice routes", () => {
     expect(got.inputsSpent).toBeUndefined();
   });
 
+  it("GET throttles the fresh rescan to once per 20 s per invoice: throttled GETs omit inputsSpent, later ones scan again", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const scans = () => s.fake.calls.filter((c) => c === "recentTransactions").length;
+    const a = (await create(call, [s.C.r3, s.C.c1])).json<Invoice>();
+    s.fake.accept(s.payTx(a, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin);
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().inputsSpent).toBe(true);
+    const first = scans();
+    s.setNow(new Date(NOW.getTime() + 10_000));
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().inputsSpent).toBeUndefined();
+    expect(scans()).toBe(first);
+    s.setNow(new Date(NOW.getTime() + 21_000));
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().inputsSpent).toBe(true);
+    expect(scans()).toBeGreaterThan(first);
+  });
+
+  it("a payment found on the first scan still marks the invoice paid", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    const tx = s.payTx(a);
+    s.fake.accept(tx.bin);
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "paid", txid: tx.txid });
+  });
+
   it("a cached hit finds a payment without a new scan", async () => {
     const s = setup();
     const call = s.user("acc");

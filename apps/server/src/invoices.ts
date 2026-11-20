@@ -27,6 +27,9 @@ export const INVOICE_ADDRESS_COUNT = 20;
 export const FIND_PAYMENT_LIMIT = 50;
 /** merchant history (and its transactions) is reused this long by GET re-checks */
 export const HISTORY_CACHE_SECONDS = 20;
+/** GET re-checks run at most one fresh history rescan per invoice this often */
+export const RESCAN_THROTTLE_SECONDS = 20;
+const RESCAN_MAP_MAX = 1000;
 /** an unpaid invoice whose inputs were spent elsewhere is given up (dead) this long after expiry */
 export const DEAD_GRACE_SECONDS = 10 * 60;
 /** sane USD/BCH range; outside it the price feed is broken and nothing is sold */
@@ -105,7 +108,7 @@ export interface InvoiceDeps {
 }
 
 /** what a re-check learned about an unpaid invoice */
-type Recheck = "paid" | "unspent" | "spent";
+type Recheck = "paid" | "unspent" | "spent" | "unknown";
 
 export function createInvoices(deps: InvoiceDeps) {
   const { db, chain, now } = deps;
@@ -201,13 +204,28 @@ export function createInvoices(deps: InvoiceDeps) {
   /**
    * Re-check an unpaid invoice: if any input is spent, look for its payment and mark it paid when found.
    * The 20 s history cache is only used to FIND a payment: "spent" (no payment) is always the result of a
-   * fresh scan. `mayBury`: also mark it dead when hopeless (create/submit only, never GET).
+   * fresh scan (GET throttles that rescan per invoice → "unknown"). `mayBury`: also mark it dead when hopeless (create/submit only, never GET).
    * Chain failures throw ChainUnavailable.
    */
-  const recheck = async (r: InvoiceRow, o: { cached: boolean; mayBury: boolean }): Promise<Recheck> => {
+  const lastRescan = new Map<string, number>();
+  /** true (and records it) when a GET may run a fresh rescan for this invoice now */
+  const rescanAllowed = (id: string): boolean => {
+    const t = now();
+    const prev = lastRescan.get(id);
+    if (prev !== undefined && t - prev < RESCAN_THROTTLE_SECONDS) return false;
+    if (lastRescan.size >= RESCAN_MAP_MAX) {
+      for (const [k, v] of lastRescan) if (t - v >= RESCAN_THROTTLE_SECONDS) lastRescan.delete(k);
+      while (lastRescan.size >= RESCAN_MAP_MAX) lastRescan.delete(lastRescan.keys().next().value!);
+    }
+    lastRescan.set(id, t);
+    return true;
+  };
+
+  const recheck = async (r: InvoiceRow, o: { cached: boolean; mayBury: boolean; throttle?: boolean }): Promise<Recheck> => {
     const outs = await onChain(() => chain.getOutputs(r.inputs));
     if (!outs.some((x) => x !== null && !x.unspent)) return "unspent";
     let txid = o.cached ? await findPayment(r, false) : null;
+    if (!txid && o.throttle && !rescanAllowed(r.id)) return "unknown"; // not known yet: the client keeps waiting
     txid ??= await findPayment(r, true);
     if (txid && markPaid(r, txid)) return "paid";
     if (o.mayBury) maybeDead(r);
@@ -319,7 +337,7 @@ export function createInvoices(deps: InvoiceDeps) {
       let spent = false;
       if (r.status === "open" || r.status === "expired") {
         try {
-          spent = (await recheck(r, { cached: true, mayBury: false })) === "spent";
+          spent = (await recheck(r, { cached: true, mayBury: false, throttle: true })) === "spent";
         } catch (e) {
           // best effort: answer with what we know
           if (!(e instanceof ChainUnavailable)) throw e;
