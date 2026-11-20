@@ -128,30 +128,35 @@ describe("evaluate: liquidation bands", () => {
 });
 
 describe("evaluate: loan gone", () => {
-  it("present in prev, absent in next → alert once and mark gone", () => {
-    const prev = state([loan(L1, 0.3), loan(L2, 0.3)]);
+  const missing = (n: number) => new Map([[L1, n]]);
+
+  it("absent for 2 consecutive refreshes → alert once and mark gone", () => {
     const next = state([loan(L2, 0.3)]);
-    const r = evaluate([watch({ lastBand: "safe" })], prev, next, NOW);
+    // first miss: nothing yet
+    expect(evaluate([watch({ lastBand: "safe" })], at(0.3), next, NOW, missing(1))).toEqual({ alerts: [], bandUpdates: [] });
+    const r = evaluate([watch({ lastBand: "safe" })], next, next, NOW, missing(2));
     expect(r.alerts.map((a) => [a.rule, a.value])).toEqual([["loan_gone", "gone"]]);
     expect(r.alerts[0]!.text).toMatch(/1a2b3c4d is gone — it was closed, fully repaid, or liquidated\. Check the Paryon app/);
     expect(r.alerts[0]!.text).toContain(PARYON_APP_URL);
     expect(r.bandUpdates).toEqual([{ watchId: "w1", lastBand: "gone" }]);
     // next cycle: still absent, already gone → nothing
-    const again = evaluate([watch({ lastBand: "gone" })], next, next, NOW);
-    expect(again).toEqual({ alerts: [], bandUpdates: [] });
+    expect(evaluate([watch({ lastBand: "gone" })], next, next, NOW, missing(3))).toEqual({ alerts: [], bandUpdates: [] });
+  });
+
+  it("decided from the persisted band and miss count, not from prev", () => {
+    // prev null (restart) or prev without the loan: still gone once missed twice
+    expect(evaluate([watch({ lastBand: "watch" })], null, at(0.3, L2), NOW, missing(2)).alerts.map((a) => a.rule)).toEqual(["loan_gone"]);
+    expect(evaluate([watch({ lastBand: "watch" })], at(0.3, L2), at(0.3, L2), NOW, missing(5)).alerts).toHaveLength(1);
+    // never evaluated (null): unknown, leave it however long it is missing
+    expect(evaluate([watch({ lastBand: null })], at(0.3), at(0.3, L2), NOW, missing(9))).toEqual({ alerts: [], bandUpdates: [] });
+    // no miss count given → never gone
+    expect(evaluate([watch({ lastBand: "watch" })], at(0.3), at(0.3, L2), NOW)).toEqual({ alerts: [], bandUpdates: [] });
   });
 
   it("loan-gone rule off: marked gone silently", () => {
-    const r = evaluate([watch({ lastBand: "safe", rules: { liquidation: true, loanGone: false } })], at(0.3), at(0.3, L2), NOW);
+    const r = evaluate([watch({ lastBand: "safe", rules: { liquidation: true, loanGone: false } })], at(0.3), at(0.3, L2), NOW, missing(2));
     expect(r.alerts).toEqual([]);
     expect(r.bandUpdates).toEqual([{ watchId: "w1", lastBand: "gone" }]);
-  });
-
-  it("after a restart (prev null) an evaluated watch whose loan is missing is gone", () => {
-    const r = evaluate([watch({ lastBand: "watch" })], null, at(0.3, L2), NOW);
-    expect(r.alerts.map((a) => a.rule)).toEqual(["loan_gone"]);
-    // never evaluated + not in prev: unknown, leave it
-    expect(evaluate([watch({ lastBand: null })], null, at(0.3, L2), NOW)).toEqual({ alerts: [], bandUpdates: [] });
   });
 
   it("reappearing clears gone and re-evaluates like a first evaluation", () => {
@@ -177,21 +182,105 @@ describe("alert runner", () => {
     const db = openDb(":memory:");
     const sent: Array<{ chatId: string; text: string }> = [];
     const logs: string[] = [];
+    let fail: Error | null = o.failSend ? new Error("Network request for 'sendMessage' failed!") : null;
     const runner = createAlertRunner({
       db,
       now: () => NOW,
       log: (m) => logs.push(m),
       sendMessage: async (chatId, text) => {
-        if (o.failSend) throw new Error("Forbidden: bot was blocked by the user");
+        if (fail) throw fail;
         sent.push({ chatId, text });
       },
     });
     const addWatch = (id: string, accountId: string, loanId = L1, lastBand: StoredBand | null = "safe") => {
       db.insertWatch({ id, accountId, loanId, rules: { liquidation: true, loanGone: true }, createdAt: 0 });
       db.setWatchBand(id, lastBand);
+      db.linkTelegramChat(accountId, `chat-${accountId}`, 0);
     };
-    return { db, sent, logs, runner, addWatch };
+    return { db, sent, logs, runner, addWatch, setFail: (e: Error | null) => (fail = e) };
   }
+
+  it("restart with a partial first snapshot: no gone alert, no band change", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc", L1, "danger");
+    await s.runner.onUpdate(null, at(0.3, L2)); // L1 missing from the first snapshot after a restart
+    expect(s.sent).toEqual([]);
+    expect(s.db.getWatch("w1")!.lastBand).toBe("danger");
+  });
+
+  it("missing once then back: no gone", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc", L1, "watch");
+    await s.runner.onUpdate(at(0.2), at(0.3, L2));
+    await s.runner.onUpdate(at(0.3, L2), at(0.2));
+    await s.runner.onUpdate(at(0.2), at(0.3, L2)); // missing again: the count restarted
+    expect(s.sent).toEqual([]);
+    expect(s.db.getWatch("w1")!.lastBand).toBe("watch");
+  });
+
+  it("missing twice: exactly one gone alert", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc", L1, "watch");
+    const gone = at(0.3, L2);
+    for (let i = 0; i < 4; i++) await s.runner.onUpdate(gone, gone);
+    expect(s.sent.map((m) => /is gone/.test(m.text))).toEqual([true]);
+    expect(s.db.getWatch("w1")!.lastBand).toBe("gone");
+  });
+
+  it("a capped gone alert is sent next cycle", async () => {
+    const s = setup();
+    const ids = Array.from({ length: 20 }, (_, i) => i.toString(16).padStart(64, "0"));
+    ids.forEach((id, i) => s.addWatch(`w${i}`, `acc${i}`, id));
+    s.addWatch("wg", "accg", L1, "watch");
+    const safe = state(ids.map((id) => loan(id, 0.3)));
+    const risky = state(ids.map((id) => loan(id, 0.05)));
+    await s.runner.onUpdate(null, safe); // L1 miss 1
+    await s.runner.onUpdate(safe, risky); // L1 miss 2 → gone, but 20 critical alerts come first → capped
+    expect(s.sent).toHaveLength(20);
+    expect(s.sent.some((m) => /is gone/.test(m.text))).toBe(false);
+    expect(s.db.getWatch("wg")!.lastBand).toBe("watch");
+    await s.runner.onUpdate(risky, risky);
+    expect(s.sent).toHaveLength(21);
+    expect(s.sent[20]!.text).toMatch(/is gone/);
+    expect(s.db.getWatch("wg")!.lastBand).toBe("gone");
+  });
+
+  it("each watch's band is persisted right after its own send", async () => {
+    const db = openDb(":memory:");
+    const seen: Array<string | null> = [];
+    const runner = createAlertRunner({ db, now: () => NOW, log: () => {}, sendMessage: async () => void seen.push(db.getWatch("w1")!.lastBand) });
+    for (const [id, acc, loanId] of [["w1", "a1", L1], ["w2", "a2", L2]] as const) {
+      db.insertWatch({ id, accountId: acc, loanId, rules: { liquidation: true, loanGone: true }, createdAt: 0 });
+      db.setWatchBand(id, "safe");
+      db.linkTelegramChat(acc, acc, 0);
+    }
+    const s = state([loan(L1, 0.05), loan(L2, 0.1)]);
+    await runner.onUpdate(s, s);
+    expect(seen).toEqual(["safe", "critical"]); // w1 (critical) goes first and is saved before w2's send
+  });
+
+  it("send failure other than 403 keeps the old band, so it retries next refresh", async () => {
+    const s = setup({ failSend: true });
+    s.addWatch("w1", "acc");
+    await s.runner.onUpdate(at(0.3), at(0.05));
+    expect(s.db.getWatch("w1")!.lastBand).toBe("safe");
+    expect(s.db.alertsFor("w1")).toEqual([]);
+    expect(s.logs.some((l) => /send failed/.test(l))).toBe(true);
+    s.setFail(null);
+    await s.runner.onUpdate(at(0.05), at(0.05));
+    expect(s.sent).toHaveLength(1);
+    expect(s.db.getWatch("w1")!.lastBand).toBe("critical");
+  });
+
+  it("403 (blocked/kicked): band advances and the chat is unlinked", async () => {
+    const s = setup();
+    s.addWatch("w1", "acc");
+    s.setFail(Object.assign(new Error("Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)"), { error_code: 403 }));
+    await s.runner.onUpdate(at(0.3), at(0.05));
+    expect(s.db.getWatch("w1")!.lastBand).toBe("critical");
+    expect(s.db.getTelegramChat("acc")).toBeNull();
+    expect(s.logs.some((l) => /unlinked/.test(l))).toBe(true);
+  });
 
   it("sends to the linked chat, records alerts_sent, updates last_band", async () => {
     const s = setup();
@@ -219,6 +308,7 @@ describe("alert runner", () => {
   it("unlinked account: no send, band still updated", async () => {
     const s = setup();
     s.addWatch("w1", "acc");
+    s.db.unlinkTelegram("acc");
     await s.runner.onUpdate(at(0.3), at(0.05));
     expect(s.sent).toEqual([]);
     expect(s.db.getWatch("w1")!.lastBand).toBe("critical");
@@ -229,7 +319,7 @@ describe("alert runner", () => {
     s.addWatch("w1", "acc");
     s.db.linkTelegramChat("acc", "555", 0);
     await expect(s.runner.onUpdate(at(0.3), at(0.05))).resolves.toBeUndefined();
-    expect(s.logs.some((l) => l.includes("bot was blocked"))).toBe(true);
+    expect(s.logs.some((l) => l.includes("sendMessage' failed"))).toBe(true);
     expect(s.db.alertsFor("w1")).toEqual([]);
   });
 

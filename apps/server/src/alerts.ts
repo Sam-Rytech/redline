@@ -79,11 +79,20 @@ function liquidationText(loan: LoanView, band: RiskBand, priceUsd: number): stri
 const goneText = (loanId: string) =>
   `⚫ Redline: your watched loan ${short(loanId)} is gone — it was closed, fully repaid, or liquidated. Check the Paryon app: ${PARYON_APP_URL}`;
 
+/** a loan must be absent from this many consecutive successful refreshes before it counts as gone */
+export const GONE_AFTER_MISSES = 2;
+
+/**
+ * `missing`: loan id → consecutive successful refreshes (including `next`) the loan has been absent from.
+ * Gone is decided from that count and the watch's persisted band, never from `prev`, so a restart (which
+ * resets the counts) can never fire "gone" on its first snapshot. `prev` is kept for the listener shape.
+ */
 export function evaluate(
   watches: readonly WatchRow[],
-  prev: LoanState | null,
+  _prev: LoanState | null,
   next: LoanState,
   now: number,
+  missing: ReadonlyMap<string, number> = new Map(),
 ): { alerts: Alert[]; bandUpdates: BandUpdate[] } {
   const alerts: Alert[] = [];
   const bandUpdates: BandUpdate[] = [];
@@ -98,9 +107,9 @@ export function evaluate(
 
     const loan = next.byId.get(w.loanId);
     if (!loan) {
-      // gone = it was there last refresh, or (after a restart) we had evaluated it before
-      const wasThere = prev ? prev.byId.has(w.loanId) : w.lastBand !== null;
-      if (w.lastBand !== "gone" && wasThere) {
+      // gone = we had evaluated it (band known, not already gone) and it has been missing long enough
+      const known = w.lastBand !== null && w.lastBand !== "gone";
+      if (known && (missing.get(w.loanId) ?? 0) >= GONE_AFTER_MISSES) {
         if (w.rules.loanGone) alert("loan_gone", "gone", goneText(w.loanId));
         setBand("gone");
       }
@@ -123,8 +132,12 @@ export function evaluate(
   return { alerts, bandUpdates };
 }
 
+/** Telegram answers 403 when the user blocked the bot or removed it from the chat (grammY: GrammyError.error_code) */
+const isChatGone = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { error_code?: unknown }).error_code === 403;
+
 export interface AlertRunnerDeps {
-  db: Pick<Db, "allWatches" | "getTelegramChat" | "setWatchBand" | "recordAlert">;
+  db: Pick<Db, "allWatches" | "getTelegramChat" | "setWatchBand" | "recordAlert" | "unlinkTelegram">;
   sendMessage: (chatId: string, text: string) => Promise<void>;
   /** unix seconds */
   now?: () => number;
@@ -138,34 +151,59 @@ export function createAlertRunner(deps: AlertRunnerDeps) {
   const cap = deps.maxPerCycle ?? MAX_ALERTS_PER_CYCLE;
   const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
   let queue: Promise<void> = Promise.resolve();
+  /** loan id → consecutive successful refreshes it was absent from (in memory: a restart resets it) */
+  const missing = new Map<string, number>();
 
   async function run(prev: LoanState | null, next: LoanState): Promise<void> {
     const t = now();
     const { db } = deps;
-    const { alerts, bandUpdates } = evaluate(db.allWatches(), prev, next, t);
+    const watches = db.allWatches();
+    const watched = new Set(watches.map((w) => w.loanId));
+    for (const id of missing.keys()) if (!watched.has(id) || next.byId.has(id)) missing.delete(id);
+    for (const id of watched) if (!next.byId.has(id)) missing.set(id, (missing.get(id) ?? 0) + 1);
+
+    const { alerts, bandUpdates } = evaluate(watches, prev, next, t, missing);
     const updates = new Map(bandUpdates.map((u) => [u.watchId, u.lastBand]));
+    // watches without an alert: save their band now
+    const alerting = new Set(alerts.map((a) => a.watchId));
+    for (const [watchId, band] of updates) if (!alerting.has(watchId)) db.setWatchBand(watchId, band);
+    /** save this watch's new band right away (so a crash mid-cycle cannot resend it) */
+    const advance = (watchId: string) => {
+      if (updates.has(watchId)) db.setWatchBand(watchId, updates.get(watchId) ?? null);
+    };
+
     // most severe first, so a capped cycle drops the least urgent
     const ordered = [...alerts].sort((a, b) => SEVERITY[b.value] - SEVERITY[a.value]);
     let sent = 0;
     let capped = 0;
     for (const a of ordered) {
       const chat = db.getTelegramChat(a.accountId);
-      if (!chat || (chat.mutedUntil !== null && chat.mutedUntil > t)) continue; // suppressed; band still advances
+      if (!chat || (chat.mutedUntil !== null && chat.mutedUntil > t)) {
+        advance(a.watchId); // suppressed; band still advances so there is no burst later
+        continue;
+      }
       if (sent >= cap) {
-        capped++;
-        updates.delete(a.watchId); // keep the old band so it alerts next cycle
+        capped++; // keep the old band so it alerts next cycle
         continue;
       }
       sent++;
       try {
         await deps.sendMessage(chat.chatId, a.text);
         db.recordAlert(a.watchId, a.rule, a.value, t);
+        advance(a.watchId);
       } catch (e) {
-        log(`telegram send failed (watch ${a.watchId}): ${errMsg(e)}`);
+        if (isChatGone(e)) {
+          // blocked or kicked: stop trying this chat
+          db.unlinkTelegram(a.accountId);
+          advance(a.watchId);
+          log(`telegram chat for account ${a.accountId.slice(0, 8)} unlinked (403: ${errMsg(e)})`);
+        } else {
+          // transient: keep the old band so the alert is retried next refresh
+          log(`telegram send failed (watch ${a.watchId}), will retry: ${errMsg(e)}`);
+        }
       }
     }
     if (capped > 0) log(`alerts capped at ${cap} this cycle; ${capped} deferred to the next refresh`);
-    for (const [watchId, band] of updates) db.setWatchBand(watchId, band);
   }
 
   return {
