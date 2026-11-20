@@ -23,6 +23,12 @@ importers:
 
   packages/api-types: {}
 
+  packages/paryon-decoder:
+    dependencies:
+      '@redline/api-types':
+        specifier: workspace:*
+        version: link:../api-types
+
 packages:
 
   '@emnapi/core@2.0.0-beta.2':
