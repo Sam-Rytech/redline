@@ -245,6 +245,7 @@ Env vars: `ELECTRUM_URL`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN
 - Electrum calls time out after 15 s and the connection is closed.
 - Keep xpubs server-side only; never show them in the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
 - No private keys anywhere on the server. The merchant address is receive-only.
+- Pro pass payments, accepted risks: Pro is granted on mempool acceptance (0-conf; a payer could double spend $0.25 after the fact); the server trusts its Electrum hosts for spent state, mempool and merchant history (raw txs are hash-checked, absence is not); invoice inputs must sit on the account's receive or change xpub, and the change xpub is trust-on-first-use (sign-in proves only the receive xpub). Server never trusts client amounts or UTXO data; exactly-once via pinned inputs + one DB transaction (paid + Pro extension).
 
 ---
 
