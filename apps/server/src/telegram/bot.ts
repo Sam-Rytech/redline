@@ -3,6 +3,11 @@ import { Bot } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import { handleCommand, type CommandDeps } from "./commands.js";
 
+/** every Bot API call is aborted after this long */
+export const BOT_CLIENT_TIMEOUT_SECONDS = 15;
+/** getUpdates long-poll wait; must stay below the client timeout or every poll would be aborted */
+export const POLL_TIMEOUT_SECONDS = 10;
+
 const PRIVATE_ONLY = "Please message me directly — alerts and loan details are only sent in a private chat.";
 
 export function createTelegramBot(opts: {
@@ -13,12 +18,16 @@ export function createTelegramBot(opts: {
   log?: (msg: string) => void;
 }) {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const bot = new Bot(opts.token, opts.botInfo ? { botInfo: opts.botInfo } : {});
+  const bot = new Bot(opts.token, {
+    client: { timeoutSeconds: BOT_CLIENT_TIMEOUT_SECONDS },
+    ...(opts.botInfo && { botInfo: opts.botInfo }),
+  });
 
   bot.on("message:text", async (ctx) => {
     const options = { link_preview_options: { is_disabled: true } };
     if (ctx.chat.type !== "private") {
-      await ctx.reply(PRIVATE_ONLY, options);
+      // in groups only commands get an answer; plain chatter is ignored
+      if (ctx.message.text.trim().startsWith("/")) await ctx.reply(PRIVATE_ONLY, options);
       return;
     }
     const reply = handleCommand({ text: ctx.message.text, chatId: String(ctx.chat.id) }, opts.deps);
@@ -64,7 +73,7 @@ export function startTelegramBot(opts: {
     }
     username ??= bot.botInfo.username;
     bot
-      .start({ onStart: (info) => log(`Telegram bot @${info.username} polling`) })
+      .start({ timeout: POLL_TIMEOUT_SECONDS, onStart: (info) => log(`Telegram bot @${info.username} polling`) })
       .catch((e: unknown) => log(`Telegram bot stopped: ${msg(e)}`));
   };
   void launch();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { openDb } from "../src/db.js";
-import { createTelegramBot } from "../src/telegram/bot.js";
+import { BOT_CLIENT_TIMEOUT_SECONDS, createTelegramBot, POLL_TIMEOUT_SECONDS } from "../src/telegram/bot.js";
 import { tokenHash } from "../src/tokens.js";
 
 const NOW = 1_800_000_000;
@@ -56,12 +56,25 @@ describe("grammY adapter", () => {
     expect(s.db.accountForChat("555")).toBe("acc");
   });
 
-  it("refuses to work in group chats", async () => {
+  it("refuses to work in group chats: commands get a 'message me directly' reply", async () => {
     const s = setup();
     s.db.insertLinkToken(tokenHash("tok"), "acc", NOW, NOW + 600);
     await s.bot.handleUpdate(s.message("/start tok", { id: -100, type: "group" }));
     expect(s.calls[0]!.payload.text).toMatch(/message me directly/i);
     expect(s.db.accountForChat("-100")).toBeNull();
+  });
+
+  it("never replies to plain text in groups", async () => {
+    const s = setup();
+    await s.bot.handleUpdate(s.message("hello everyone", { id: -100, type: "group" }));
+    expect(s.calls).toEqual([]);
+  });
+
+  it("Bot API calls time out after 15 s; long polling waits less than that", () => {
+    const s = setup();
+    expect(BOT_CLIENT_TIMEOUT_SECONDS).toBe(15);
+    expect((s.bot as unknown as { clientConfig?: { timeoutSeconds?: number } }).clientConfig?.timeoutSeconds).toBe(15);
+    expect(POLL_TIMEOUT_SECONDS).toBeLessThan(BOT_CLIENT_TIMEOUT_SECONDS);
   });
 
   it("sendMessage sends plain text without link previews; failures reject (the runner logs them)", async () => {

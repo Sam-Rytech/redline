@@ -87,6 +87,21 @@ describe("/status", () => {
     expect(out).toContain(PARYON_APP_URL);
   });
 
+  it("truncates to fit 4000 chars with '…and N more'", () => {
+    const s = setup();
+    s.db.linkTelegramChat("acc", "555", NOW);
+    for (let i = 0; i < 200; i++) {
+      s.db.insertWatch({ id: `w${i}`, accountId: "acc", loanId: "ee".repeat(30) + String(i).padStart(4, "0"), rules: { liquidation: true, loanGone: true }, createdAt: i });
+    }
+    s.db.insertWatch({ id: "wl", accountId: "acc", loanId: L1, rules: { liquidation: true, loanGone: true }, createdAt: 999 });
+    const out = s.say("/status");
+    expect(out.length).toBeLessThanOrEqual(4000);
+    const m = /…and (\d+) more/.exec(out);
+    expect(m).not.toBeNull();
+    const shown = (out.match(/ — /g) ?? []).length;
+    expect(shown + Number(m![1])).toBe(201);
+  });
+
   it("no watches; data still loading; muted note", () => {
     const s = setup({ state: null });
     s.db.linkTelegramChat("acc", "555", NOW);

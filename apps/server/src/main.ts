@@ -42,12 +42,19 @@ const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`Redline API on http://localhost:${port}/api (login domain ${config.loginDomain})`);
 });
 
-const shutdown = () => {
+const BOT_STOP_WAIT_MS = 3000;
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   reader.stop();
-  void telegram?.stop();
+  // let grammY confirm the last update offset, but never hang the exit on Telegram
+  if (telegram) {
+    await Promise.race([telegram.stop().catch(() => {}), new Promise((r) => setTimeout(r, BOT_STOP_WAIT_MS))]);
+  }
   server.close();
   db.close();
   process.exit(0);
 };
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

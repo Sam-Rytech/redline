@@ -15,6 +15,8 @@ export interface CommandDeps {
 }
 
 export const MAX_MUTE_SECONDS = 7 * 86400;
+/** Telegram's limit is 4096; keep a margin */
+export const MAX_REPLY_CHARS = 4000;
 const DEFAULT_MUTE_SECONDS = 86400;
 const START_TOKEN = /^[A-Za-z0-9_-]{1,64}$/;
 const UNIT: Record<string, number> = { m: 60, h: 3600, d: 86400 };
@@ -66,7 +68,13 @@ function status(accountId: string, chatId: string, deps: CommandDeps): string {
     const dist = loan.distanceToLiquidation === null ? null : loan.distanceToLiquidation * 100;
     return `${id} — CR ${pct(loan.collateralRatioPct)} · ${pct(dist)} from liquidation · liq ${usd(loan.liquidationPriceUsd)} · ${ICON[loan.risk]} ${loan.risk.toUpperCase()}`;
   });
-  return [...mutedNote, `Your watches (BCH ${usd(s.priceUsd)}):`, ...lines, "", `Act in the Paryon app: ${PARYON_APP_URL}`].join("\n");
+  const head = [...mutedNote, `Your watches (BCH ${usd(s.priceUsd)}):`];
+  const tail = ["", `Act in the Paryon app: ${PARYON_APP_URL}`];
+  const build = (shown: string[], more: number) =>
+    [...head, ...shown, ...(more > 0 ? [`…and ${more} more`] : []), ...tail].join("\n");
+  let n = lines.length;
+  while (n > 0 && build(lines.slice(0, n), lines.length - n).length > MAX_REPLY_CHARS) n--;
+  return build(lines.slice(0, n), lines.length - n);
 }
 
 export function handleCommand(msg: { text: string; chatId: string }, deps: CommandDeps): string {
