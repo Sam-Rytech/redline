@@ -139,4 +139,21 @@ describe("electrum chain", () => {
     await new Promise((r) => setTimeout(r, 60));
     expect(tried).toEqual(["a", "b"]);
   });
+
+  it("after a host stalls, the next call starts at the next host and keeps the one that worked", async () => {
+    const tried: string[] = [];
+    const chain = createElectrumChain({
+      hostnames: ["a", "b", "c"],
+      timeoutMs: 30,
+      provider: (host) => {
+        tried.push(host);
+        const p = fake().provider();
+        return host === "a" ? { ...p, getRawTransaction: () => new Promise<string>(() => {}) } : p;
+      },
+    });
+    await expect(chain.getSourceOutput({ txid: FUND, vout: 1 })).rejects.toThrow(/timed out/);
+    expect((await chain.getSourceOutput({ txid: FUND, vout: 1 }))?.valueSatoshis).toBe(5678n);
+    await chain.getSourceOutput({ txid: FUND, vout: 1 });
+    expect(tried).toEqual(["a", "b", "b"]);
+  });
 });

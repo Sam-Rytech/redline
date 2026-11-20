@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { electrumHosts, fetchSnapshot } from "@redline/paryon-decoder";
+import { createSnapshotFetcher, electrumHosts } from "@redline/paryon-decoder";
 import { createAlertRunner } from "./alerts.js";
 import { createApp } from "./app.js";
 import { parseConfig } from "./config.js";
@@ -14,7 +14,7 @@ const { port, refreshMs: intervalMs, timeoutMs } = config;
 const hostnames = electrumHosts(config.electrumHost);
 
 const reader = createChainReader({
-  fetch: () => fetchSnapshot({ hostnames, log: (m) => console.log(m) }),
+  fetch: createSnapshotFetcher({ hostnames, log: (m) => console.log(m) }),
   intervalMs,
   timeoutMs,
 });

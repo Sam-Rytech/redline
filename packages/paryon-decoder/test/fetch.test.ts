@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   connectFirst,
+  createHostRotation,
+  createSnapshotFetcher,
   DEFAULT_ELECTRUM_HOSTS,
   electrumHosts,
   fetchSnapshot,
@@ -104,5 +106,67 @@ describe("fetchSnapshot host fallback", () => {
     const { make, log } = fakeHosts({ only: "ok" });
     await fetchSnapshot({ hostname: "only", provider: make });
     expect(log[0]).toBe("connect only");
+  });
+});
+
+describe("createHostRotation", () => {
+  it("starts at the last host that succeeded; a failure moves to the next one", () => {
+    const r = createHostRotation(["a", "b", "c"]);
+    expect(r.ordered()).toEqual(["a", "b", "c"]);
+    r.succeeded("c");
+    expect(r.ordered()).toEqual(["c", "a", "b"]);
+    r.failed("c");
+    expect(r.ordered()).toEqual(["a", "b", "c"]);
+    r.failed(undefined); // no host connected: just advance
+    expect(r.ordered()).toEqual(["b", "c", "a"]);
+  });
+});
+
+describe("createSnapshotFetcher", () => {
+  /** hosts: "ok" answers, "stall" connects then never answers until released, "fail" connects then errors */
+  function hosts(behaviour: Record<string, "ok" | "stall" | "fail">) {
+    const connects: string[] = [];
+    const release: Array<() => void> = [];
+    const make = (host: string): SnapshotProvider => ({
+      async connect() {
+        connects.push(host);
+      },
+      async disconnect() {
+        return true;
+      },
+      async getUtxos(address) {
+        if (behaviour[host] === "stall") await new Promise<void>((res) => release.push(res));
+        if (behaviour[host] === "fail") throw new Error("request failed");
+        return address === PARYON_ADDRESSES.price ? [PRICE_UTXO] : [];
+      },
+      async getBlockHeight() {
+        return 950_000;
+      },
+    });
+    return { make, connects, release };
+  }
+
+  it("a host that connects but stalls is skipped on the next refresh; the good host is kept", async () => {
+    const h = hosts({ a: "stall", b: "ok", c: "ok" });
+    const fetch = createSnapshotFetcher({ hostnames: ["a", "b", "c"], provider: h.make });
+    void fetch().catch(() => {}); // stalls on a (the reader would time it out)
+    await new Promise((r) => setTimeout(r, 0));
+    expect((await fetch()).blockHeight).toBe(950_000);
+    expect(h.connects).toEqual(["a", "b"]);
+    await fetch();
+    expect(h.connects).toEqual(["a", "b", "b"]); // starts at the last good host
+    // the stalled fetch finishing late does not move the start back to a
+    for (const r of h.release) r();
+    await new Promise((r) => setTimeout(r, 0));
+    await fetch();
+    expect(h.connects.at(-1)).toBe("b");
+  });
+
+  it("a failed refresh rotates to the next host", async () => {
+    const h = hosts({ a: "fail", b: "ok" });
+    const fetch = createSnapshotFetcher({ hostnames: ["a", "b"], provider: h.make });
+    await expect(fetch()).rejects.toThrow("request failed");
+    await fetch();
+    expect(h.connects).toEqual(["a", "b"]);
   });
 });

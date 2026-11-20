@@ -2,7 +2,7 @@
 // Electrum here; nothing the client sends about UTXOs is trusted.
 import { decodeTransaction, hashTransaction, hexToBin, lockingBytecodeToCashAddress } from "@bitauth/libauth";
 import type { Utxo } from "@redline/api-types";
-import { connectFirst, DEFAULT_ELECTRUM_HOSTS } from "@redline/paryon-decoder";
+import { connectFirst, createHostRotation, DEFAULT_ELECTRUM_HOSTS } from "@redline/paryon-decoder";
 import type { LoginOutpoint, SourceOutput } from "@redline/wizard-login/server";
 import { ElectrumNetworkProvider } from "cashscript";
 
@@ -77,6 +77,8 @@ export function createElectrumChain(
 ): Chain {
   const timeoutMs = opts.timeoutMs ?? ELECTRUM_TIMEOUT_MS;
   const hosts = opts.hostnames ?? (opts.hostname ? [opts.hostname] : [...DEFAULT_ELECTRUM_HOSTS]);
+  // start at the last host that answered; move past a host that failed or stalled
+  const rotation = createHostRotation(hosts);
   const makeProvider =
     opts.provider ??
     ((hostname: string) =>
@@ -84,10 +86,11 @@ export function createElectrumChain(
 
   async function run<T>(what: string, fn: (p: ProviderLike) => Promise<T>): Promise<T> {
     let p: ProviderLike | undefined; // the provider currently connecting / connected
+    let host: string | undefined; // the host that connected
     const abort = new AbortController();
     const work = (async () => {
-      ({ provider: p } = await connectFirst(
-        hosts,
+      ({ provider: p, host } = await connectFirst(
+        rotation.ordered(),
         (h) => (p = makeProvider(h)),
         {
           signal: abort.signal,
@@ -107,9 +110,12 @@ export function createElectrumChain(
       }
     })();
     try {
-      return await withTimeout(work, timeoutMs, what);
+      const result = await withTimeout(work, timeoutMs, what);
+      if (host !== undefined) rotation.succeeded(host);
+      return result;
     } catch (e) {
       abort.abort(); // stop trying further hosts
+      rotation.failed(host);
       // a hung connect/request must not leak the socket: close it, best effort
       if (p && e instanceof Error && e.message.includes("timed out")) {
         try {

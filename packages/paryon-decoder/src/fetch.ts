@@ -92,27 +92,53 @@ export interface SnapshotProvider extends Connectable {
   getBlockHeight(): Promise<number>;
 }
 
-export async function fetchSnapshot(
-  opts: {
-    /** legacy single host; ignored when `hostnames` is given */
-    hostname?: string;
-    /** tried in order on connection failure (default: DEFAULT_ELECTRUM_HOSTS) */
-    hostnames?: string[];
-    connectTimeoutMs?: number;
-    log?: (msg: string) => void;
-    /** for tests */
-    provider?: (host: string) => SnapshotProvider;
-  } = {},
-): Promise<Snapshot> {
-  const hosts = opts.hostnames ?? (opts.hostname ? [opts.hostname] : [...DEFAULT_ELECTRUM_HOSTS]);
-  const make =
-    opts.provider ??
-    ((hostname: string) =>
-      new ElectrumNetworkProvider("mainnet", { hostname, manualConnectionManagement: true }) as unknown as SnapshotProvider);
-  const { provider } = await connectFirst(hosts, make, {
+/**
+ * Which host to try first. Starts at the last host that completed a full fetch; after a failure (or a
+ * stall the caller gave up on) it moves past the host that failed, so a host that connects but never
+ * answers cannot block every refresh.
+ */
+export function createHostRotation(hosts: readonly string[]) {
+  let start = 0;
+  return {
+    /** all hosts, beginning at the current start */
+    ordered: (): string[] => [...hosts.slice(start), ...hosts.slice(0, start)],
+    succeeded(host: string): void {
+      const i = hosts.indexOf(host);
+      if (i >= 0) start = i;
+    },
+    /** `host` = the one that connected and then failed; undefined = none connected */
+    failed(host: string | undefined): void {
+      if (hosts.length === 0) return;
+      const i = host === undefined ? -1 : hosts.indexOf(host);
+      start = ((i >= 0 ? i : start) + 1) % hosts.length;
+    },
+  };
+}
+
+interface FetchOpts {
+  /** legacy single host; ignored when `hostnames` is given */
+  hostname?: string;
+  /** tried in order on connection failure (default: DEFAULT_ELECTRUM_HOSTS) */
+  hostnames?: string[];
+  connectTimeoutMs?: number;
+  log?: (msg: string) => void;
+  /** for tests */
+  provider?: (host: string) => SnapshotProvider;
+}
+
+const hostsOf = (opts: FetchOpts) => opts.hostnames ?? (opts.hostname ? [opts.hostname] : [...DEFAULT_ELECTRUM_HOSTS]);
+const makerOf = (opts: FetchOpts) =>
+  opts.provider ??
+  ((hostname: string) =>
+    new ElectrumNetworkProvider("mainnet", { hostname, manualConnectionManagement: true }) as unknown as SnapshotProvider);
+
+/** one full fetch from the first host that connects; `onConnected` learns which host that was */
+async function fetchFrom(hosts: string[], opts: FetchOpts, onConnected: (host: string) => void): Promise<Snapshot> {
+  const { provider, host } = await connectFirst(hosts, makerOf(opts), {
     ...(opts.connectTimeoutMs !== undefined && { connectTimeoutMs: opts.connectTimeoutMs }),
     ...(opts.log && { log: opts.log }),
   });
+  onConnected(host);
   try {
     const get = async (address: string): Promise<ChainUtxo[]> =>
       (await provider.getUtxos(address)).map((u) => ({
@@ -141,4 +167,38 @@ export async function fetchSnapshot(
       // never mask the original error
     }
   }
+}
+
+/** a single stateless fetch (hosts always tried in the given order) */
+export async function fetchSnapshot(opts: FetchOpts = {}): Promise<Snapshot> {
+  return fetchFrom(hostsOf(opts), opts, () => {});
+}
+
+/**
+ * A stateful fetch for the chain reader: starts at the last host that completed a full fetch, and moves
+ * to the next host after a failed refresh. A call that is still running when the next one starts (the
+ * reader timed it out) counts as a failure of its host; its late result never moves the start back.
+ */
+export function createSnapshotFetcher(opts: FetchOpts = {}): () => Promise<Snapshot> {
+  const rotation = createHostRotation(hostsOf(opts));
+  let latest = 0;
+  let running: { id: number; host: string | undefined } | null = null;
+  return async () => {
+    if (running) {
+      opts.log?.(`electrum ${running.host ?? "connect"} stalled; starting the next refresh on another host`);
+      rotation.failed(running.host);
+    }
+    const me = { id: ++latest, host: undefined as string | undefined };
+    running = me;
+    try {
+      const snap = await fetchFrom(rotation.ordered(), opts, (h) => (me.host = h));
+      if (me.id === latest && me.host !== undefined) rotation.succeeded(me.host);
+      return snap;
+    } catch (e) {
+      if (me.id === latest) rotation.failed(me.host);
+      throw e;
+    } finally {
+      if (running === me) running = null;
+    }
+  };
 }
