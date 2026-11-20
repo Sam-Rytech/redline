@@ -7,8 +7,6 @@ export const INVOICE_MAGIC = "PWINV";
 export const INVOICE_ID_BYTES = 16;
 /** an invoice holds 1..10 inputs */
 export const MAX_INVOICE_INPUTS = 10;
-/** the server wants inputs worth at least amountSats + this */
-export const PAYMENT_FEE_HEADROOM_SATS = 500;
 export const MIN_PAYMENT_FEE_SATS = 300;
 /** change below this is dropped into the fee */
 export const DUST_SATS = 546;
@@ -43,7 +41,7 @@ export function decodeInvoiceOpReturn(lockingBytecode: Uint8Array): string | nul
   return binsAreEqual(encodeInvoiceOpReturn(idHex), lockingBytecode) ? idHex : null;
 }
 
-/** 1 sat/byte estimate for `inputs` P2PKH inputs + 2 P2PKH outputs + the invoice OP_RETURN, at least 300. */
+/** Client and server both require inputs ≥ amountSats + this. 1 sat/byte estimate for `inputs` P2PKH inputs + 2 P2PKH outputs + the invoice OP_RETURN, at least 300. */
 export function estimatePaymentFee(inputs: number): number {
   const opReturnOutput = 8 + 1 + INVOICE_OP_RETURN_BYTES;
   return Math.max(MIN_PAYMENT_FEE_SATS, 10 + 148 * inputs + 34 * 2 + opReturnOutput);

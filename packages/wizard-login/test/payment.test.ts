@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   INVOICE_OP_RETURN_BYTES,
   MAX_INVOICE_INPUTS,
-  PAYMENT_FEE_HEADROOM_SATS,
   decodeInvoiceOpReturn,
   encodeInvoiceOpReturn,
   estimatePaymentFee,
@@ -46,7 +45,6 @@ describe("payment fee + price", () => {
     expect(estimatePaymentFee(1)).toBe(300); // 10 + 148 + 68 + 33 = 259 → floor 300
     expect(estimatePaymentFee(2)).toBe(10 + 148 * 2 + 68 + 33);
     expect(estimatePaymentFee(MAX_INVOICE_INPUTS)).toBe(10 + 148 * 10 + 68 + 33);
-    expect(PAYMENT_FEE_HEADROOM_SATS).toBe(500);
   });
 
   it("proPassSats = ceil(0.25 / price × 1e8)", () => {

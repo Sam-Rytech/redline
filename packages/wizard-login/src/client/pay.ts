@@ -13,7 +13,6 @@ import type { ApiError, CreateInvoiceRequest, Invoice, InvoiceQuote, Outpoint, U
 import {
   DUST_SATS,
   MAX_INVOICE_INPUTS,
-  PAYMENT_FEE_HEADROOM_SATS,
   encodeInvoiceOpReturn,
   estimatePaymentFee,
   invoiceOpReturnHex,
@@ -31,14 +30,17 @@ export class PaymentError extends Error {
   serverCode?: string;
   /** receive address 0 (for no_funds) */
   address?: string;
+  /** the server's error.invoiceId (already_paid, invoice_open) */
+  invoiceId?: string;
 
   constructor(
     readonly code: PaymentErrorCode,
     message: string,
-    extra: { status?: number; serverCode?: string; address?: string; cause?: unknown } = {},
+    extra: { status?: number; serverCode?: string; address?: string; invoiceId?: string; cause?: unknown } = {},
   ) {
     super(message, extra.cause !== undefined ? { cause: extra.cause } : undefined);
     this.name = "PaymentError";
+    if (extra.invoiceId !== undefined) this.invoiceId = extra.invoiceId;
     if (extra.status !== undefined) this.status = extra.status;
     if (extra.serverCode !== undefined) this.serverCode = extra.serverCode;
     if (extra.address !== undefined) this.address = extra.address;
@@ -58,7 +60,7 @@ export interface PayProPassOptions {
   onStep?: (step: PayStep, detail?: string) => void;
 }
 
-/** Token-free coins, largest first, until they cover amount + max(fee, 500); at most 10. Null if they never do. */
+/** Token-free coins, largest first, until they cover amount + fee estimate (the server's bar); at most 10. Null if they never do. */
 export function selectPaymentCoins<T extends Pick<Utxo, "txid" | "vout" | "satoshis" | "token">>(
   utxos: readonly T[],
   amountSats: number,
@@ -73,7 +75,7 @@ export function selectPaymentCoins<T extends Pick<Utxo, "txid" | "vout" | "satos
     coins.push(u);
     total += u.satoshis;
     const fee = estimatePaymentFee(coins.length);
-    if (total >= amountSats + Math.max(fee, PAYMENT_FEE_HEADROOM_SATS)) return { coins, fee };
+    if (total >= amountSats + fee) return { coins, fee };
   }
   return null;
 }
@@ -185,7 +187,11 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
       const err = (body as Partial<ApiError> | null)?.error;
       const code = typeof err?.code === "string" ? err.code : `http_${res.status}`;
       const msg = typeof err?.message === "string" ? err.message : res.statusText || "request failed";
-      throw new PaymentError(code === "already_paid" ? "already_paid" : "server_rejected", `${code}: ${msg}`, { status: res.status, serverCode: code });
+      throw new PaymentError(code === "already_paid" ? "already_paid" : "server_rejected", `${code}: ${msg}`, {
+        status: res.status,
+        serverCode: code,
+        ...(typeof err?.invoiceId === "string" && { invoiceId: err.invoiceId }),
+      });
     }
     return body as T;
   };
@@ -237,7 +243,8 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
       onStep?.("checking", paidDetail(prev));
       return prev;
     }
-    if (prev?.status === "open") invoice = prev;
+    // open but its coins were spent by something that does not pay it: it can never be paid
+    if (prev?.status === "open" && !prev.inputsSpent) invoice = prev;
     else store.clear();
   }
 
@@ -249,7 +256,7 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
     utxos = await walletUtxos();
     const sel = selectPaymentCoins(utxos, quote.amountSats);
     if (!sel) {
-      const need = quote.amountSats + PAYMENT_FEE_HEADROOM_SATS;
+      const need = quote.amountSats + estimatePaymentFee(1);
       throw new PaymentError(
         "no_funds",
         `The Pro pass costs ${quote.amountSats} sats; your wallet needs about ${need} sats of plain BCH (no tokens) on its first ${LOGIN_ADDRESS_COUNT} addresses. Send some to ${receive0} and try again.`,
@@ -258,7 +265,22 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
     }
     onStep?.("invoice", `${sel.coins.length} coin(s)`);
     const body: CreateInvoiceRequest = { asset: "BCH", inputs: sel.coins.map((c) => ({ txid: c.txid, vout: c.vout })) };
-    invoice = await api<Invoice>("/invoices", { method: "POST", body });
+    try {
+      invoice = await api<Invoice>("/invoices", { method: "POST", body });
+    } catch (e) {
+      // another invoice (other coins, e.g. after lost storage) is still open and payable: pay that one
+      if (!(e instanceof PaymentError && e.serverCode === "invoice_open" && e.invoiceId)) throw e;
+      onStep?.("invoice", `reusing open invoice ${e.invoiceId}`);
+      invoice = await getInvoice(e.invoiceId);
+      if (invoice.status !== "open") throw e;
+    }
+    // never sign for more than the quote shown (+5 %) or to another address
+    if (invoice.amountSats > quote.amountSats * 1.05 || invoice.merchantAddress !== quote.merchantAddress) {
+      throw new PaymentError(
+        "server_rejected",
+        `The invoice (${invoice.amountSats} sats to ${invoice.merchantAddress}) does not match the quote (${quote.amountSats} sats to ${quote.merchantAddress}); not paying it.`,
+      );
+    }
     store.set(invoice.id);
   }
 

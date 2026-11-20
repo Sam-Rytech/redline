@@ -39,13 +39,13 @@ const utxo = (n: number, sats: number, token = false): Utxo => ({
 });
 
 describe("selectPaymentCoins", () => {
-  it("token-free coins, largest first, until amount + max(fee, 500) is covered", () => {
+  it("token-free coins, largest first, until amount + fee estimate is covered (same bar as the server)", () => {
     const sel = selectPaymentCoins([utxo(1, 1_000), utxo(2, 30_000), utxo(3, 500_000, true), utxo(4, 50_000)], AMOUNT);
     expect(sel?.coins.map((c) => c.satoshis)).toEqual([50_000, 30_000]);
     expect(sel?.fee).toBe(estimatePaymentFee(2));
-    // one coin worth exactly amount + 500 is enough (fee 300 < 500 headroom)
-    expect(selectPaymentCoins([utxo(1, AMOUNT + 500)], AMOUNT)?.coins).toHaveLength(1);
-    expect(selectPaymentCoins([utxo(1, AMOUNT + 499)], AMOUNT)).toBeNull();
+    // one coin worth exactly amount + 300 (the one-input fee) is enough
+    expect(selectPaymentCoins([utxo(1, AMOUNT + 300)], AMOUNT)?.coins).toHaveLength(1);
+    expect(selectPaymentCoins([utxo(1, AMOUNT + 299)], AMOUNT)).toBeNull();
     // never more than 10 inputs
     expect(selectPaymentCoins(Array.from({ length: 12 }, (_, i) => utxo(i + 1, 6_400)), AMOUNT)).toBeNull(); // 10 × 6,400 < 62,500 + fee; the 11th never counts
     expect(selectPaymentCoins([], AMOUNT)).toBeNull();
@@ -304,6 +304,73 @@ describe("payProPass against the real server app", () => {
     expect(inv.status).toBe("paid");
     expect(steps.at(-1)).toBe("checking");
     expect(s.fake.broadcasts).toHaveLength(0); // found via the merchant history, not re-broadcast
+    expect(storage.m.size).toBe(0);
+  });
+
+  it("refuses, before signing, an invoice that costs > 5 % over the quote or pays another address", async () => {
+    for (const tamper of [
+      (inv: Invoice) => ({ ...inv, amountSats: Math.floor(AMOUNT * 1.06) }),
+      (inv: Invoice) => ({ ...inv, merchantAddress: addr(wallet.lockingBytecode("receive", 9)) }),
+    ]) {
+      const s = setup();
+      s.coin(1, ["receive", 2], 200_000);
+      const fetch = (async (u: RequestInfo | URL, init?: RequestInit) => {
+        const res = await s.fetch(u, init);
+        if (init?.method === "POST" && String(u).endsWith("/api/invoices")) {
+          return new Response(JSON.stringify(tamper((await res.json()) as Invoice)), { status: res.status, headers: { "content-type": "application/json" } });
+        }
+        return res;
+      }) as typeof globalThis.fetch;
+      const { manager, signCalls } = fakeManager(wallet, s.fake);
+      const e = await payError(payProPass({ manager, fetch, storage: memoryStorage() }));
+      expect(e.code).toBe("server_rejected");
+      expect(e.message).toMatch(/quote/);
+      expect(signCalls).toHaveLength(0);
+    }
+  });
+
+  it("a pending invoice whose coins were spent elsewhere is dropped and a fresh one is made", async () => {
+    const s = setup();
+    s.coin(1, ["receive", 2], 100_000);
+    const storage = memoryStorage();
+    await payError(payProPass({ manager: fakeManager(wallet, s.fake, { reject: "no" }).manager, fetch: s.fetch, storage }));
+    const first = storage.getItem(PENDING_INVOICE_KEY)!;
+    // the user spends that coin somewhere else
+    const c1 = s.fake.coins.get("01".repeat(32) + ":0")!;
+    s.fake.accept(
+      encodeTransaction(
+        signP2pkhInputs(
+          {
+            version: 2,
+            locktime: 0,
+            inputs: [{ outpointTransactionHash: hexToBin("01".repeat(32)), outpointIndex: 0, sequenceNumber: 0xffffffff, unlockingBytecode: new Uint8Array() }],
+            outputs: [{ lockingBytecode: wallet.lockingBytecode("receive", 1), valueSatoshis: 99_000n }],
+          },
+          [c1.output as never],
+          [wallet.privateKey("receive", 2)],
+        ),
+      ),
+    );
+    s.coin(2, ["receive", 3], 100_000);
+    const inv = await payProPass({ manager: fakeManager(wallet, s.fake).manager, fetch: s.fetch, storage });
+    expect(inv.status).toBe("paid");
+    expect(inv.id).not.toBe(first);
+    expect(inv.inputs).toEqual([{ txid: "02".repeat(32), vout: 0 }]);
+  });
+
+  it("409 invoice_open (storage lost, other coins picked) → reuses the open invoice and its coins", async () => {
+    const s = setup();
+    s.coin(1, ["receive", 2], 100_000);
+    const lost = memoryStorage();
+    await payError(payProPass({ manager: fakeManager(wallet, s.fake, { reject: "no" }).manager, fetch: s.fetch, storage: lost }));
+    const first = lost.getItem(PENDING_INVOICE_KEY)!;
+    s.coin(2, ["receive", 3], 5_000_000); // the next attempt would pick this one
+    const storage = memoryStorage();
+    const { manager, signCalls } = fakeManager(wallet, s.fake);
+    const inv = await payProPass({ manager, fetch: s.fetch, storage });
+    expect(inv.id).toBe(first);
+    expect(inv.status).toBe("paid");
+    expect(signCalls[0]!.inputPaths).toEqual([[0, "receive", 2]]);
     expect(storage.m.size).toBe(0);
   });
 
