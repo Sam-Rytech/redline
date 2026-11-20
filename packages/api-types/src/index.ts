@@ -81,7 +81,8 @@ export interface ChallengeRequest {
   xpubReceive: string;
   xpubChange: string;
   outpoint: Outpoint;
-  path: [AddressPathName, number];
+  /** Sign-in must use a receive-path UTXO (index 0..999); anything else → 400 bad_path. */
+  path: ["receive", number];
 }
 export interface ChallengeResponse {
   nonce: Hex; // 16 bytes

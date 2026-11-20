@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 CREATE TABLE IF NOT EXISTS challenges (
   nonce TEXT PRIMARY KEY, outpoint_txid TEXT, outpoint_vout INTEGER, path_name TEXT, path_index INTEGER,
-  xpub_receive TEXT, xpub_change TEXT, domain TEXT, expiry INTEGER, used_at INTEGER
+  xpub_receive TEXT, xpub_change TEXT, domain TEXT, expiry INTEGER, used_at INTEGER, binding_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, account_id TEXT, expires_at INTEGER);
 `;
@@ -49,11 +49,14 @@ export function openDb(path: string): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(SCHEMA);
+  // databases created before challenge binding lack the column
+  const cols = (db.prepare("PRAGMA table_info(challenges)").all() as Row[]).map((r) => String(r.name));
+  if (!cols.includes("binding_hash")) db.exec("ALTER TABLE challenges ADD COLUMN binding_hash TEXT");
 
   const q = {
     insertChallenge: db.prepare(
-      `INSERT INTO challenges (nonce, outpoint_txid, outpoint_vout, path_name, path_index, xpub_receive, xpub_change, domain, expiry, used_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO challenges (nonce, outpoint_txid, outpoint_vout, path_name, path_index, xpub_receive, xpub_change, domain, expiry, used_at, binding_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     getChallenge: db.prepare(`SELECT * FROM challenges WHERE nonce = ?`),
     markUsed: db.prepare(`UPDATE challenges SET used_at = ? WHERE nonce = ? AND used_at IS NULL`),
@@ -61,7 +64,7 @@ export function openDb(path: string): Db {
     purgeSessions: db.prepare(`DELETE FROM sessions WHERE expires_at <= ?`),
     upsertAccount: db.prepare(
       `INSERT INTO accounts (id, xpub_receive, xpub_change, created_at, pro_until) VALUES (?, ?, ?, ?, NULL)
-       ON CONFLICT(id) DO UPDATE SET xpub_receive = excluded.xpub_receive, xpub_change = excluded.xpub_change`,
+       ON CONFLICT(id) DO UPDATE SET xpub_change = excluded.xpub_change`,
     ),
     getAccount: db.prepare(`SELECT * FROM accounts WHERE id = ?`),
     setProUntil: db.prepare(`UPDATE accounts SET pro_until = ? WHERE id = ?`),
@@ -74,22 +77,23 @@ export function openDb(path: string): Db {
     insertChallenge(c) {
       q.insertChallenge.run(
         c.nonceHex, c.outpoint.txid, c.outpoint.vout, c.path[0], c.path[1],
-        c.xpubReceive, c.xpubChange, c.domain, c.expiry, c.usedAt,
+        c.xpubReceive, c.xpubChange, c.domain, c.expiry, c.usedAt, c.bindingHash,
       );
     },
     getChallenge(nonceHex) {
       const r = q.getChallenge.get(nonceHex) as Row | undefined;
       if (!r) return null;
-      const pathName = str(r.path_name);
-      if (pathName !== "receive" && pathName !== "change") return null;
+      // sign-in only ever proves the receive xpub; anything else (legacy rows) is unusable
+      if (str(r.path_name) !== "receive" || typeof r.binding_hash !== "string") return null;
       return {
         nonceHex: str(r.nonce),
         expiry: num(r.expiry),
         domain: str(r.domain),
         outpoint: { txid: str(r.outpoint_txid), vout: num(r.outpoint_vout) },
-        path: [pathName, num(r.path_index)],
+        path: ["receive", num(r.path_index)],
         xpubReceive: str(r.xpub_receive),
         xpubChange: str(r.xpub_change),
+        bindingHash: r.binding_hash,
         usedAt: r.used_at === null ? null : num(r.used_at),
       };
     },
@@ -101,6 +105,9 @@ export function openDb(path: string): Db {
       q.purgeSessions.run(now);
     },
     upsertAccount(a) {
+      // the account id is sha256(xpub_receive), so an existing row can never legitimately differ
+      const existing = q.getAccount.get(a.id) as Row | undefined;
+      if (existing && str(existing.xpub_receive) !== a.xpubReceive) throw new Error("account xpub_receive mismatch");
       q.upsertAccount.run(a.id, a.xpubReceive, a.xpubChange, a.now);
     },
     getAccount(id) {

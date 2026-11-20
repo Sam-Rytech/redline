@@ -1,13 +1,20 @@
 // Server half of WizardConnect sign-in. Framework-agnostic: all I/O is injected.
 // Every chain fact (source output script + value, spent state) comes from `deps`, never the client.
+//
+// What a successful verify proves: the holder of the private key for address
+// `xpubReceive/index` signed (SIGHASH_ALL) a transaction committing to our domain and a
+// single-use nonce that was issued to the same browser (binding token) less than 300 s ago.
 import {
   binToHex,
   binsAreEqual,
   createVirtualMachineBCH,
+  decodeAuthenticationInstructions,
   decodeHdPublicKey,
   decodeTransaction,
   deriveHdPublicNodeChild,
+  encodeDataPush,
   encodeLockingBytecodeP2pkh,
+  flattenBinArray,
   hash160,
   hashTransaction,
   hexToBin,
@@ -15,12 +22,15 @@ import {
   utf8ToBin,
   type Output,
 } from "@bitauth/libauth";
-import { MAX_LOGIN_FEE_SATS, MIN_LOGIN_FEE_SATS, NONCE_BYTES, decodeLoginOpReturn } from "../protocol.js";
+import { MAX_LOGIN_FEE_SATS, MIN_LOGIN_FEE_SATS, MIN_LOGIN_UTXO_SATS, NONCE_BYTES, decodeLoginOpReturn } from "../protocol.js";
 
 export const CHALLENGE_TTL_SECONDS = 300;
 export const MAX_PATH_INDEX = 999;
+/** random bytes in the browser binding token */
+export const BINDING_BYTES = 32;
+/** SIGHASH_ALL | SIGHASH_FORKID: the only accepted signature type (covers every input and output) */
+export const SIGHASH_ALL_FORKID = 0x41;
 
-export type LoginPathName = "receive" | "change";
 export interface LoginOutpoint {
   txid: string;
   vout: number;
@@ -31,9 +41,12 @@ export interface StoredChallenge {
   expiry: number;
   domain: string;
   outpoint: LoginOutpoint;
-  path: [LoginPathName, number];
+  /** sign-in always proves the receive xpub */
+  path: ["receive", number];
   xpubReceive: string;
   xpubChange: string;
+  /** sha256 (hex) of the binding token given to the browser that asked for this challenge */
+  bindingHash: string;
   usedAt: number | null;
 }
 
@@ -50,16 +63,21 @@ export interface VerifyDeps {
   /** unix seconds */
   now(): number;
   domain: string;
+  /** binding token presented by the browser calling verify (e.g. from its challenge cookie) */
+  bindingToken: string | null;
 }
 
 export type VerifyFailureCode =
   | "bad_tx"
   | "bad_domain"
   | "unknown_nonce"
+  | "challenge_not_bound"
   | "outpoint_mismatch"
   | "expired"
   | "nonce_used"
   | "source_missing"
+  | "token_source"
+  | "source_too_small"
   | "wrong_address"
   | "bad_fee"
   | "bad_signature"
@@ -72,16 +90,45 @@ export type VerifyResult =
 const fail = (code: VerifyFailureCode, message: string): VerifyResult => ({ ok: false, code, message });
 const HEX = /^(?:[0-9a-f]{2})+$/i;
 const TXID = /^[0-9a-f]{64}$/;
+const BINDING = /^[0-9a-f]{64}$/;
 
 export const accountIdFor = (xpubReceive: string): string => binToHex(sha256.hash(utf8ToBin(xpubReceive)));
+export const bindingHashFor = (bindingToken: string): string => binToHex(sha256.hash(utf8ToBin(bindingToken)));
 
-/** P2PKH locking bytecode of `xpub`'s child `index` (the xpub is the chain node). Null if the xpub is invalid. */
-export function p2pkhForXpub(xpub: string, index: number): Uint8Array | null {
+/** compressed public key of `xpub`'s child `index` (the xpub is the chain node), or null */
+export function pubkeyForXpub(xpub: string, index: number): Uint8Array | null {
+  if (!Number.isInteger(index) || index < 0 || index > 0x7fffffff) return null;
   const decoded = decodeHdPublicKey(xpub);
   if (typeof decoded === "string") return null;
   const child = deriveHdPublicNodeChild(decoded.node, index, { throwErrors: false });
-  if (typeof child === "string") return null;
-  return encodeLockingBytecodeP2pkh(hash160(child.publicKey));
+  return typeof child === "string" ? null : child.publicKey;
+}
+
+/** P2PKH locking bytecode of `xpub`'s child `index`. Null if the xpub is invalid. */
+export function p2pkhForXpub(xpub: string, index: number): Uint8Array | null {
+  const pub = pubkeyForXpub(xpub, index);
+  return pub ? encodeLockingBytecodeP2pkh(hash160(pub)) : null;
+}
+
+/** exactly `<sig> <pubkey>` as two minimal pushes, or null */
+function parseP2pkhUnlocking(unlocking: Uint8Array): { sig: Uint8Array; pubkey: Uint8Array } | null {
+  const ins = decodeAuthenticationInstructions(unlocking);
+  if (ins.length !== 2) return null;
+  const data: Uint8Array[] = [];
+  for (const i of ins) {
+    if (("malformed" in i && i.malformed) || !("data" in i)) return null;
+    data.push(i.data);
+  }
+  const [sig, pubkey] = data as [Uint8Array, Uint8Array];
+  if (!binsAreEqual(flattenBinArray([encodeDataPush(sig), encodeDataPush(pubkey)]), unlocking)) return null;
+  return { sig, pubkey };
+}
+
+/** Schnorr (64 + 1) or DER ECDSA (DER 8..72 + 1, starts 0x30) signature ending in ALL|FORKID */
+function isAllForkIdSignature(sig: Uint8Array): boolean {
+  if (sig[sig.length - 1] !== SIGHASH_ALL_FORKID) return false;
+  if (sig.length === 65) return true;
+  return sig.length >= 9 && sig.length <= 73 && sig[0] === 0x30;
 }
 
 const vm = createVirtualMachineBCH();
@@ -107,6 +154,10 @@ export async function verifyLogin(signedTxHex: string, deps: VerifyDeps): Promis
   if (op.nonceHex.length !== NONCE_BYTES * 2) return fail("bad_tx", "Bad nonce");
   const ch = await deps.getChallenge(op.nonceHex);
   if (!ch) return fail("unknown_nonce", "Unknown challenge");
+  const token = deps.bindingToken;
+  if (typeof token !== "string" || !BINDING.test(token) || bindingHashFor(token) !== ch.bindingHash) {
+    return fail("challenge_not_bound", "This challenge was issued to a different browser");
+  }
   const inputTxid = binToHex(input.outpointTransactionHash);
   if (inputTxid !== ch.outpoint.txid || input.outpointIndex !== ch.outpoint.vout) {
     return fail("outpoint_mismatch", "Input does not spend the challenge outpoint");
@@ -121,13 +172,17 @@ export async function verifyLogin(signedTxHex: string, deps: VerifyDeps): Promis
   const outpoint = { txid: ch.outpoint.txid, vout: ch.outpoint.vout };
   const source = await deps.getSourceOutput(outpoint);
   if (!source) return fail("source_missing", "Source output not found on chain");
+  if (source.token) return fail("token_source", "Sign in with a UTXO that holds no tokens");
+  if (source.valueSatoshis < BigInt(MIN_LOGIN_UTXO_SATS)) {
+    return fail("source_too_small", `Sign in with a UTXO of at least ${MIN_LOGIN_UTXO_SATS} sats`);
+  }
 
-  // 4. address binding + fee
+  // 4. address binding (receive xpub only) + fee
   const [pathName, pathIndex] = ch.path;
-  const xpub = pathName === "receive" ? ch.xpubReceive : pathName === "change" ? ch.xpubChange : null;
-  const expected = xpub !== null && Number.isInteger(pathIndex) && pathIndex >= 0 ? p2pkhForXpub(xpub, pathIndex) : null;
-  if (!expected || !binsAreEqual(source.lockingBytecode, expected)) {
-    return fail("wrong_address", "Source output is not the wallet address at the stated path");
+  const pubkey = pathName === "receive" ? pubkeyForXpub(ch.xpubReceive, pathIndex) : null;
+  const expected = pubkey ? encodeLockingBytecodeP2pkh(hash160(pubkey)) : null;
+  if (!pubkey || !expected || !binsAreEqual(source.lockingBytecode, expected)) {
+    return fail("wrong_address", "Source output is not the wallet's receive address at the stated index");
   }
   if (!binsAreEqual(out1.lockingBytecode, source.lockingBytecode)) {
     return fail("wrong_address", "Output 1 must pay back to the source address");
@@ -135,13 +190,12 @@ export async function verifyLogin(signedTxHex: string, deps: VerifyDeps): Promis
   const fee = source.valueSatoshis - out1.valueSatoshis;
   if (fee < BigInt(MIN_LOGIN_FEE_SATS) || fee > BigInt(MAX_LOGIN_FEE_SATS)) return fail("bad_fee", `Fee ${fee} out of range`);
 
-  // 5. signature: full VM evaluation against the chain's source output
-  const sourceOutput: Output = {
-    lockingBytecode: source.lockingBytecode,
-    valueSatoshis: source.valueSatoshis,
-    ...(source.token && { token: source.token }),
-  };
-  const result = vm.verify({ transaction: tx, sourceOutputs: [sourceOutput] });
+  // 5. signature: exactly <sig ALL|FORKID> <derived pubkey>, then full VM evaluation against chain data
+  const unlock = parseP2pkhUnlocking(input.unlockingBytecode);
+  if (!unlock || !isAllForkIdSignature(unlock.sig) || !binsAreEqual(unlock.pubkey, pubkey)) {
+    return fail("bad_signature", "Unlocking bytecode must be <SIGHASH_ALL|FORKID signature> <pubkey>");
+  }
+  const result = vm.verify({ transaction: tx, sourceOutputs: [{ lockingBytecode: source.lockingBytecode, valueSatoshis: source.valueSatoshis }] });
   if (result !== true) return fail("bad_signature", "Signature did not verify");
 
   // 6. not double-spent elsewhere

@@ -6,9 +6,10 @@ const ch = (nonceHex: string, expiry: number) => ({
   expiry,
   domain: "localhost",
   outpoint: { txid: "ab".repeat(32), vout: 2 },
-  path: ["change", 4] as ["change", number],
+  path: ["receive", 4] as ["receive", number],
   xpubReceive: "xr",
   xpubChange: "xc",
+  bindingHash: "bb".repeat(32),
   usedAt: null,
 });
 
@@ -58,5 +59,18 @@ describe("db", () => {
     db.upsertAccount({ id: "a", xpubReceive: "r1", xpubChange: "c2", now: 5 });
     expect(db.getAccount("a")).toEqual({ id: "a", xpubReceive: "r1", xpubChange: "c2", createdAt: 1, proUntil: 99 });
     expect(db.getAccount("b")).toBeNull();
+  });
+
+  it("upsertAccount never overwrites xpub_receive", () => {
+    const db = openDb(":memory:");
+    db.upsertAccount({ id: "a", xpubReceive: "r1", xpubChange: "c1", now: 1 });
+    expect(() => db.upsertAccount({ id: "a", xpubReceive: "EVIL", xpubChange: "c2", now: 2 })).toThrow();
+    expect(db.getAccount("a")).toMatchObject({ xpubReceive: "r1", xpubChange: "c1" });
+  });
+
+  it("ignores legacy non-receive challenge rows", () => {
+    const db = openDb(":memory:");
+    db.insertChallenge({ ...ch("n1", 100), path: ["change", 0] as unknown as ["receive", number] });
+    expect(db.getChallenge("n1")).toBeNull();
   });
 });

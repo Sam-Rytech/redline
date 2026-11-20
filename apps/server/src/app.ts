@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { binToHex, decodeCashAddress, sha256, utf8ToBin } from "@bitauth/libauth";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import {
   FREE_WATCH_LIMIT,
@@ -12,7 +14,14 @@ import {
   type OkResponse,
 } from "@redline/api-types";
 import { summarize } from "@redline/paryon-decoder";
-import { ChallengeError, createChallenge, p2pkhForXpub, verifyLogin, type VerifyDeps } from "@redline/wizard-login/server";
+import {
+  CHALLENGE_TTL_SECONDS,
+  ChallengeError,
+  createChallenge,
+  p2pkhForXpub,
+  verifyLogin,
+  type VerifyDeps,
+} from "@redline/wizard-login/server";
 import type { ServerConfig } from "./config.js";
 import type { AccountRow, Db } from "./db.js";
 import { addressFor, type Chain } from "./electrum.js";
@@ -24,6 +33,11 @@ const CACHE_CONTROL = "public, max-age=15";
 
 export const SESSION_COOKIE = "rl_session";
 export const SESSION_SECONDS = 7 * 24 * 3600;
+/** binds a challenge to the browser that requested it; only sent to /api/auth */
+export const CHALLENGE_COOKIE = "rl_chal";
+const CHALLENGE_COOKIE_PATH = "/api/auth";
+const MAX_BODY_BYTES = 32 * 1024;
+const RATE_LIMIT_MAX_KEYS = 10_000;
 const RATE_LIMIT = 30;
 const RATE_WINDOW_MS = 60_000;
 const MAX_UTXO_ADDRESSES = 60;
@@ -38,7 +52,7 @@ export interface AppDeps {
   reader: ChainReader;
   db: Db;
   chain: Chain;
-  config: Pick<ServerConfig, "loginDomain" | "secureCookies">;
+  config: Pick<ServerConfig, "loginDomain" | "secureCookies" | "trustProxy" | "publicOrigin">;
   now?: () => Date;
 }
 
@@ -65,12 +79,23 @@ export function createApp(deps: AppDeps) {
   // ---------- rate limit: fixed window, per IP, shared by /auth/* and /utxos ----------
   let windowId = -1;
   const hits = new Map<string, number>();
+  const socketIp = (c: Context): string => {
+    try {
+      return getConnInfo(c).remote.address ?? "unknown";
+    } catch {
+      return "unknown"; // not running under @hono/node-server
+    }
+  };
+  /**
+   * TRUST_PROXY=false: the TCP peer. TRUST_PROXY=true: the right-most x-forwarded-for entry,
+   * i.e. the one our proxy appended; everything left of it is client-controlled.
+   */
   const clientIp = (c: Context): string => {
-    const xff = c.req.header("x-forwarded-for");
-    const first = xff?.split(",")[0]?.trim();
-    if (first) return first;
-    const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
-    return env?.incoming?.socket?.remoteAddress ?? "unknown";
+    if (config.trustProxy) {
+      const last = c.req.header("x-forwarded-for")?.split(",").pop()?.trim();
+      if (last) return last;
+    }
+    return socketIp(c);
   };
   const rateLimit = async (c: Context, next: () => Promise<void>) => {
     const w = Math.floor(now().getTime() / RATE_WINDOW_MS);
@@ -79,6 +104,10 @@ export function createApp(deps: AppDeps) {
       hits.clear();
     }
     const ip = clientIp(c);
+    if (!hits.has(ip) && hits.size >= RATE_LIMIT_MAX_KEYS) {
+      const oldest = hits.keys().next().value;
+      if (oldest !== undefined) hits.delete(oldest);
+    }
     const n = (hits.get(ip) ?? 0) + 1;
     hits.set(ip, n);
     if (n > RATE_LIMIT) return c.json(err("rate_limited", "Too many requests, slow down"), 429);
@@ -86,6 +115,21 @@ export function createApp(deps: AppDeps) {
   };
   app.use("/auth/*", rateLimit);
   app.use("/utxos", rateLimit);
+
+  // ---------- POST hardening (CSRF + size) ----------
+  const limitBody = bodyLimit({
+    maxSize: MAX_BODY_BYTES,
+    onError: (c) => c.json(err("too_large", `Request body over ${MAX_BODY_BYTES} bytes`), 413),
+  });
+  app.use("*", async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    if (config.publicOrigin && c.req.header("origin") !== config.publicOrigin) {
+      return c.json(err("bad_origin", "Cross-origin request refused"), 403);
+    }
+    const type = c.req.header("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (type !== "application/json") return c.json(err("bad_content_type", "Send Content-Type: application/json"), 415);
+    return limitBody(c, next);
+  });
 
   // ---------- sessions ----------
   const sessionAccount = (c: Context): AccountRow | null => {
@@ -155,9 +199,9 @@ export function createApp(deps: AppDeps) {
     const body = await readJson(c);
     if (!body) return badRequest(c, "Expected a JSON ChallengeRequest");
     const t = nowSec();
-    let ch;
+    let made;
     try {
-      ch = createChallenge(body as unknown as ChallengeRequest, {
+      made = createChallenge(body as unknown as ChallengeRequest, {
         domain: config.loginDomain,
         now: t,
         randomBytes: (n) => new Uint8Array(randomBytes(n)),
@@ -166,8 +210,16 @@ export function createApp(deps: AppDeps) {
       if (e instanceof ChallengeError) return c.json(err(e.code, e.message), 400);
       throw e;
     }
+    const ch = made.challenge;
     db.purgeExpired(t);
     db.insertChallenge(ch);
+    setCookie(c, CHALLENGE_COOKIE, made.bindingToken, {
+      httpOnly: true,
+      sameSite: "Lax",
+      path: CHALLENGE_COOKIE_PATH,
+      maxAge: CHALLENGE_TTL_SECONDS,
+      ...(config.secureCookies && { secure: true }),
+    });
     const res: ChallengeResponse = { nonce: ch.nonceHex, expiry: ch.expiry, domain: ch.domain };
     return c.json(res);
   });
@@ -178,8 +230,12 @@ export function createApp(deps: AppDeps) {
     if (typeof hex !== "string" || hex.length === 0 || hex.length > 20_000) {
       return badRequest(c, "Expected { signedTxHex }");
     }
+    const binding = getCookie(c, CHALLENGE_COOKIE);
+    // one attempt per challenge cookie: clear it whatever the outcome
+    deleteCookie(c, CHALLENGE_COOKIE, { path: CHALLENGE_COOKIE_PATH, httpOnly: true, sameSite: "Lax", ...(config.secureCookies && { secure: true }) });
     const vdeps: VerifyDeps = {
       domain: config.loginDomain,
+      bindingToken: binding ?? null,
       now: nowSec,
       getChallenge: async (n) => db.getChallenge(n),
       markChallengeUsed: async (n, t) => db.markChallengeUsed(n, t),

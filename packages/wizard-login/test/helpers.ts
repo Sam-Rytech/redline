@@ -55,17 +55,20 @@ export function signP2pkhInput0(
   tx: TransactionCommon,
   source: { lockingBytecode: Uint8Array; valueSatoshis: bigint },
   privateKey: Uint8Array,
+  opts: { sighash?: number; ecdsa?: boolean } = {},
 ): TransactionCommon {
+  const sighash = opts.sighash ?? SIGHASH_ALL_FORKID;
   const pub = secp256k1.derivePublicKeyCompressed(privateKey);
   if (typeof pub === "string") throw new Error(pub);
   const serialization = generateSigningSerializationBCH(
     { inputIndex: 0, sourceOutputs: [source], transaction: tx },
-    { coveredBytecode: source.lockingBytecode, signingSerializationType: Uint8Array.of(SIGHASH_ALL_FORKID) },
+    { coveredBytecode: source.lockingBytecode, signingSerializationType: Uint8Array.of(sighash) },
   );
-  const sig = secp256k1.signMessageHashSchnorr(privateKey, sha256.hash(sha256.hash(serialization)));
+  const digest = sha256.hash(sha256.hash(serialization));
+  const sig = opts.ecdsa ? secp256k1.signMessageHashDER(privateKey, digest) : secp256k1.signMessageHashSchnorr(privateKey, digest);
   if (typeof sig === "string") throw new Error(sig);
   const unlockingBytecode = flattenBinArray([
-    encodeDataPush(flattenBinArray([sig, Uint8Array.of(SIGHASH_ALL_FORKID)])),
+    encodeDataPush(flattenBinArray([sig, Uint8Array.of(sighash)])),
     encodeDataPush(pub),
   ]);
   const [input, ...rest] = tx.inputs;
@@ -87,6 +90,10 @@ export interface LoginTxOptions {
   signWith?: Uint8Array;
   /** mutate the unsigned tx before signing */
   mutateBeforeSign?: (tx: TransactionCommon) => TransactionCommon;
+  /** signature hash type byte (default 0x41 = ALL|FORKID) */
+  sighash?: number;
+  /** sign with DER ECDSA instead of Schnorr */
+  ecdsa?: boolean;
   /** mutate the signed tx (breaks the signature) */
   mutateAfterSign?: (tx: TransactionCommon) => TransactionCommon;
 }
@@ -104,7 +111,10 @@ export function makeLoginTx(o: LoginTxOptions) {
     expiry: o.expiry,
   });
   if (o.mutateBeforeSign) tx = o.mutateBeforeSign(tx);
-  let signed = signP2pkhInput0(tx, source, o.signWith ?? o.wallet.privateKey(path[0], path[1]));
+  let signed = signP2pkhInput0(tx, source, o.signWith ?? o.wallet.privateKey(path[0], path[1]), {
+    ...(o.sighash !== undefined && { sighash: o.sighash }),
+    ...(o.ecdsa !== undefined && { ecdsa: o.ecdsa }),
+  });
   if (o.mutateAfterSign) signed = o.mutateAfterSign(signed);
   return { hex: binToHex(encodeTransaction(signed)), tx: signed, source, outpoint, path };
 }

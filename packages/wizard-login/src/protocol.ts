@@ -80,7 +80,9 @@ export interface UnsignedLoginTxInput extends LoginOpReturn {
 }
 
 /**
- * Build the unsigned login transaction. libauth 3.0.0 keeps `outpointTransactionHash`
+ * Build the unsigned login transaction. The source must be a token-free receive-path P2PKH
+ * UTXO (the server only accepts proofs of the receive xpub) and input 0 must be signed with
+ * SIGHASH_ALL|FORKID (0x41); other sighash types are rejected. libauth 3.0.0 keeps `outpointTransactionHash`
  * in display (big-endian) order and reverses it when encoding, so the txid hex is used as-is.
  */
 export function buildUnsignedLoginTx(o: UnsignedLoginTxInput): TransactionCommon {

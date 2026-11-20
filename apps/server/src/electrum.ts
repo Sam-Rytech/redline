@@ -89,7 +89,19 @@ export function createElectrumChain(
         }
       }
     })();
-    return withTimeout(work, timeoutMs, what);
+    try {
+      return await withTimeout(work, timeoutMs, what);
+    } catch (e) {
+      // a hung connect/request must not leak the socket: close it, best effort
+      if (e instanceof Error && e.message.includes("timed out")) {
+        try {
+          await withTimeout(Promise.resolve(p.disconnect()), 2000, "disconnect");
+        } catch {
+          // ignore
+        }
+      }
+      throw e;
+    }
   }
 
   /** raw tx by id, verified to hash to that id; null when the node does not know it */

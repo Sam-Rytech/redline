@@ -88,8 +88,10 @@ describe("electrum chain", () => {
     ]);
   });
 
-  it("times out", async () => {
-    const chain = createElectrumChain({ provider: fake({ hang: true }).provider, timeoutMs: 20 });
+  it("times out and disconnects the hung provider", async () => {
+    const f = fake({ hang: true });
+    const chain = createElectrumChain({ provider: f.provider, timeoutMs: 20 });
     await expect(chain.getSourceOutput({ txid: FUND, vout: 0 })).rejects.toThrow(/timed out/);
+    expect(f.log.disconnects).toBeGreaterThanOrEqual(1);
   });
 });

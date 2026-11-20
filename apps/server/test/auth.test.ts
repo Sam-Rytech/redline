@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ApiError, ChallengeResponse, LoanView, MeResponse, Utxo } from "@redline/api-types";
 import { computeLoanViews } from "@redline/paryon-decoder";
 import { FUNDING_TXID, makeLoginTx, makeWallet } from "@redline/wizard-login/testing";
-import { createApp } from "../src/app.js";
+import { createApp, type AppDeps } from "../src/app.js";
 import { openDb } from "../src/db.js";
 import type { Chain } from "../src/electrum.js";
 import type { ChainReader, LoanState } from "../src/reader.js";
@@ -11,7 +11,9 @@ import type { ChainReader, LoanState } from "../src/reader.js";
 const DOMAIN = "redline.test";
 const NOW = new Date("2026-11-20T12:00:00.000Z");
 const wallet = makeWallet(3);
+const attacker = makeWallet(4);
 const OUTPOINT = { txid: FUNDING_TXID, vout: 1 };
+const ATTACKER_OUTPOINT = { txid: FUNDING_TXID, vout: 2 };
 const addr = (b: Uint8Array) => {
   const r = lockingBytecodeToCashAddress({ bytecode: b, prefix: "bitcoincash" });
   if (typeof r === "string") throw new Error(r);
@@ -42,9 +44,11 @@ function fakeChain(o: { spentElsewhere?: boolean } = {}) {
   ];
   const chain: Chain = {
     async getSourceOutput(op) {
-      return op.txid === OUTPOINT.txid && op.vout === OUTPOINT.vout
-        ? { lockingBytecode: wallet.lockingBytecode("receive", 0), valueSatoshis: 10_000n }
-        : null;
+      if (op.txid === OUTPOINT.txid && op.vout === OUTPOINT.vout) return { lockingBytecode: wallet.lockingBytecode("receive", 0), valueSatoshis: 10_000n };
+      if (op.txid === ATTACKER_OUTPOINT.txid && op.vout === ATTACKER_OUTPOINT.vout) {
+        return { lockingBytecode: attacker.lockingBytecode("change", 0), valueSatoshis: 10_000n };
+      }
+      return null;
     },
     async isUnspentOrSpentBy() {
       return !o.spentElsewhere;
@@ -57,7 +61,9 @@ function fakeChain(o: { spentElsewhere?: boolean } = {}) {
   return { chain, calls };
 }
 
-function setup(o: { secureCookies?: boolean; state?: LoanState | null; spentElsewhere?: boolean } = {}) {
+type ReqInit = RequestInit & { json?: unknown; cookie?: string; xff?: string; socketIp?: string; origin?: string };
+
+function setup(o: { secureCookies?: boolean; state?: LoanState | null; spentElsewhere?: boolean; config?: Partial<AppDeps["config"]> } = {}) {
   const db = openDb(":memory:");
   const { chain, calls } = fakeChain(o);
   let now = NOW;
@@ -65,38 +71,45 @@ function setup(o: { secureCookies?: boolean; state?: LoanState | null; spentElse
     reader: reader(o.state === undefined ? loanState : o.state),
     db,
     chain,
-    config: { loginDomain: DOMAIN, secureCookies: o.secureCookies ?? false },
+    config: { loginDomain: DOMAIN, secureCookies: o.secureCookies ?? false, trustProxy: false, publicOrigin: undefined, ...o.config },
     now: () => now,
   });
   const bodies: string[] = [];
-  const req = async (path: string, init: RequestInit & { json?: unknown; cookie?: string; ip?: string } = {}) => {
+  const req = async (path: string, init: ReqInit = {}) => {
     const headers = new Headers(init.headers);
-    if (init.json !== undefined) headers.set("content-type", "application/json");
+    const method = init.method ?? (init.json !== undefined ? "POST" : "GET");
+    if (method === "POST" && !headers.has("content-type")) headers.set("content-type", "application/json");
     if (init.cookie) headers.set("cookie", init.cookie);
-    if (init.ip) headers.set("x-forwarded-for", `${init.ip}, 10.0.0.1`);
-    const res = await app.request(path, {
-      ...init,
-      headers,
-      ...(init.json !== undefined && { method: init.method ?? "POST", body: JSON.stringify(init.json) }),
-    });
+    if (init.xff) headers.set("x-forwarded-for", init.xff);
+    if (init.origin) headers.set("origin", init.origin);
+    const env = { incoming: { socket: { remoteAddress: init.socketIp ?? "127.0.0.1" } } };
+    const res = await app.request(
+      path,
+      { ...init, method, headers, ...(init.json !== undefined && { body: JSON.stringify(init.json) }) },
+      env,
+    );
     const text = await res.text();
     bodies.push(text);
     return { res, text, json: <T>() => JSON.parse(text) as T };
   };
-  const challenge = async (path: ["receive" | "change", number] = ["receive", 0]) => {
-    const r = await req("/api/auth/challenge", { json: { xpubReceive: wallet.xpubReceive, xpubChange: wallet.xpubChange, outpoint: OUTPOINT, path } });
-    expect(r.res.status).toBe(200);
-    return r.json<ChallengeResponse>();
+  const cookieFrom = (res: Response, name: string): string | null => {
+    const all = res.headers.getSetCookie();
+    const c = all.find((x) => x.startsWith(`${name}=`));
+    return c ? c.split(";")[0]! : null;
   };
-  const signIn = async () => {
-    const ch = await challenge();
+  const challenge = async (init: ReqInit = {}, body: unknown = { xpubReceive: wallet.xpubReceive, xpubChange: wallet.xpubChange, outpoint: OUTPOINT, path: ["receive", 0] }) => {
+    const r = await req("/api/auth/challenge", { json: body, ...init });
+    expect(r.res.status, r.text).toBe(200);
+    return { ...r.json<ChallengeResponse>(), chalCookie: cookieFrom(r.res, "rl_chal")!, setCookie: r.res.headers.getSetCookie() };
+  };
+  const signIn = async (init: ReqInit = {}) => {
+    const ch = await challenge(init);
     const t = makeLoginTx({ wallet, outpoint: OUTPOINT, domain: ch.domain, nonceHex: ch.nonce, expiry: ch.expiry });
-    const r = await req("/api/auth/verify", { json: { signedTxHex: t.hex } });
-    const setCookie = r.res.headers.get("set-cookie") ?? "";
-    const cookie = setCookie.split(";")[0]!;
-    return { ...r, setCookie, cookie, tx: t };
+    const r = await req("/api/auth/verify", { json: { signedTxHex: t.hex }, cookie: ch.chalCookie, ...init });
+    const cookie = cookieFrom(r.res, "rl_session") ?? "";
+    return { ...r, setCookies: r.res.headers.getSetCookie(), cookie, tx: t, ch };
   };
-  return { app, db, req, challenge, signIn, bodies, calls, setNow: (d: Date) => (now = d) };
+  return { app, db, req, challenge, signIn, bodies, calls, cookieFrom, setNow: (d: Date) => (now = d) };
 }
 
 const accountId = binToHex(sha256.hash(utf8ToBin(wallet.xpubReceive)));
@@ -109,16 +122,22 @@ describe("auth flow", () => {
     expect(ch.domain).toBe(DOMAIN);
     expect(ch.nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(ch.expiry).toBe(NOW.getTime() / 1000 + 300);
+    const chalSet = ch.setCookie.find((c) => c.startsWith("rl_chal="))!;
+    expect(chalSet).toMatch(/^rl_chal=[0-9a-f]{64};/);
+    for (const part of ["HttpOnly", "SameSite=Lax", "Path=/api/auth", "Max-Age=300"]) expect(chalSet).toContain(part);
 
     const t = makeLoginTx({ wallet, outpoint: OUTPOINT, domain: ch.domain, nonceHex: ch.nonce, expiry: ch.expiry });
-    const v = await s.req("/api/auth/verify", { json: { signedTxHex: t.hex } });
-    expect(v.res.status).toBe(200);
+    const v = await s.req("/api/auth/verify", { json: { signedTxHex: t.hex }, cookie: ch.chalCookie });
+    expect(v.res.status, v.text).toBe(200);
     expect(v.json<MeResponse>()).toEqual({ accountId, pro: false, proUntil: null, telegramLinked: false, watchLimit: 1 });
-    const setCookie = v.res.headers.get("set-cookie")!;
-    expect(setCookie).toMatch(/^rl_session=[0-9a-f]{64};/);
-    for (const part of ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=604800"]) expect(setCookie).toContain(part);
-    expect(setCookie).not.toContain("Secure");
-    const cookie = setCookie.split(";")[0]!;
+    const setCookies = v.res.headers.getSetCookie();
+    const session = setCookies.find((c) => c.startsWith("rl_session="))!;
+    expect(session).toMatch(/^rl_session=[0-9a-f]{64};/);
+    for (const part of ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=604800"]) expect(session).toContain(part);
+    expect(session).not.toContain("Secure");
+    // challenge cookie is cleared
+    expect(setCookies.find((c) => c.startsWith("rl_chal="))).toMatch(/rl_chal=;.*Max-Age=0/);
+    const cookie = session.split(";")[0]!;
 
     const me = await s.req("/api/me", { cookie });
     expect(me.res.status).toBe(200);
@@ -134,20 +153,53 @@ describe("auth flow", () => {
     expect(code(after.text)).toBe("unauthorized");
   });
 
-  it("Secure cookie when configured", async () => {
+  it("Secure cookies when configured", async () => {
     const s = setup({ secureCookies: true });
     const r = await s.signIn();
     expect(r.res.status).toBe(200);
-    expect(r.setCookie).toContain("Secure");
+    expect(r.ch.setCookie.find((c) => c.startsWith("rl_chal="))).toContain("Secure");
+    expect(r.setCookies.find((c) => c.startsWith("rl_session="))).toContain("Secure");
   });
 
   it("reused tx → 401 nonce_used", async () => {
     const s = setup();
     const first = await s.signIn();
     expect(first.res.status).toBe(200);
-    const again = await s.req("/api/auth/verify", { json: { signedTxHex: first.tx.hex } });
+    const again = await s.req("/api/auth/verify", { json: { signedTxHex: first.tx.hex }, cookie: first.ch.chalCookie });
     expect(again.res.status).toBe(401);
     expect(code(again.text)).toBe("nonce_used");
+  });
+
+  it("PoC: victim receive xpub + attacker change xpub/UTXO on the change path → 400 bad_path, no session", async () => {
+    const s = setup();
+    const r = await s.req("/api/auth/challenge", {
+      json: { xpubReceive: wallet.xpubReceive, xpubChange: attacker.xpubChange, outpoint: ATTACKER_OUTPOINT, path: ["change", 0] },
+    });
+    expect(r.res.status).toBe(400);
+    expect(code(r.text)).toBe("bad_path");
+    // and claiming the attacker's change coin on the receive path fails verification
+    const ch = await s.challenge({}, { xpubReceive: wallet.xpubReceive, xpubChange: attacker.xpubChange, outpoint: ATTACKER_OUTPOINT, path: ["receive", 0] });
+    const t = makeLoginTx({ wallet: attacker, path: ["change", 0], outpoint: ATTACKER_OUTPOINT, domain: ch.domain, nonceHex: ch.nonce, expiry: ch.expiry });
+    const v = await s.req("/api/auth/verify", { json: { signedTxHex: t.hex }, cookie: ch.chalCookie });
+    expect(v.res.status).toBe(401);
+    expect(code(v.text)).toBe("wrong_address");
+    expect(s.db.getAccount(accountId)).toBeNull();
+  });
+
+  it("challenge_not_bound: valid signed tx without / with another browser's challenge cookie", async () => {
+    const s = setup();
+    const ch = await s.challenge();
+    const t = makeLoginTx({ wallet, outpoint: OUTPOINT, domain: ch.domain, nonceHex: ch.nonce, expiry: ch.expiry });
+    const none = await s.req("/api/auth/verify", { json: { signedTxHex: t.hex } });
+    expect(none.res.status).toBe(401);
+    expect(code(none.text)).toBe("challenge_not_bound");
+    const otherBrowser = await s.challenge();
+    const wrong = await s.req("/api/auth/verify", { json: { signedTxHex: t.hex }, cookie: otherBrowser.chalCookie });
+    expect(wrong.res.status).toBe(401);
+    expect(code(wrong.text)).toBe("challenge_not_bound");
+    // the rightful browser can still use it
+    const ok = await s.req("/api/auth/verify", { json: { signedTxHex: t.hex }, cookie: ch.chalCookie });
+    expect(ok.res.status).toBe(200);
   });
 
   it("verify failure codes are passed through as 401", async () => {
@@ -155,7 +207,7 @@ describe("auth flow", () => {
     const r = await s.signIn();
     expect(r.res.status).toBe(401);
     expect(code(r.text)).toBe("spent");
-    expect(r.res.headers.get("set-cookie")).toBeNull();
+    expect(s.cookieFrom(r.res, "rl_session")).toBeNull();
     const garbage = await s.req("/api/auth/verify", { json: { signedTxHex: "00" } });
     expect(garbage.res.status).toBe(401);
     expect(code(garbage.text)).toBe("bad_tx");
@@ -163,14 +215,14 @@ describe("auth flow", () => {
 
   it("400 on malformed requests", async () => {
     const s = setup();
-    const bad = await s.req("/api/auth/verify", { method: "POST", body: "not json", headers: { "content-type": "application/json" } });
+    const bad = await s.req("/api/auth/verify", { method: "POST", body: "not json" });
     expect(bad.res.status).toBe(400);
     expect(code(bad.text)).toBe("bad_request");
     expect(code((await s.req("/api/auth/verify", { json: {} })).text)).toBe("bad_request");
     const ch = await s.req("/api/auth/challenge", { json: { xpubReceive: "nope", xpubChange: wallet.xpubChange, outpoint: OUTPOINT, path: ["receive", 0] } });
     expect(ch.res.status).toBe(400);
     expect(code(ch.text)).toBe("bad_xpub");
-    const ch2 = await s.req("/api/auth/challenge", { json: { xpubReceive: wallet.xpubReceive, xpubChange: wallet.xpubChange, outpoint: OUTPOINT, path: ["defi", 0] } });
+    const ch2 = await s.req("/api/auth/challenge", { json: { xpubReceive: wallet.xpubReceive, xpubChange: wallet.xpubChange, outpoint: OUTPOINT, path: ["receive", 1000] } });
     expect(ch2.res.status).toBe(400);
     expect(code(ch2.text)).toBe("bad_request");
   });
@@ -201,12 +253,49 @@ describe("auth flow", () => {
     expect(me).toMatchObject({ pro: true, proUntil: new Date(until * 1000).toISOString(), watchLimit: null });
   });
 
-  it("the signed tx's txid is what gets checked against the chain", async () => {
+  it("the signed tx decodes and has a txid", async () => {
     const s = setup();
     const r = await s.signIn();
-    const tx = decodeTransaction(hexToBin(r.tx.hex));
-    expect(typeof tx).not.toBe("string");
+    expect(typeof decodeTransaction(hexToBin(r.tx.hex))).not.toBe("string");
     expect(hashTransaction(hexToBin(r.tx.hex))).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("request hardening", () => {
+  it("413 too_large for POST bodies over 32 KB", async () => {
+    const s = setup();
+    const r = await s.req("/api/auth/verify", { json: { signedTxHex: "00".repeat(20_000) } });
+    expect(r.res.status).toBe(413);
+    expect(code(r.text)).toBe("too_large");
+  });
+
+  it("415 bad_content_type on POST /api/auth/* without JSON content type", async () => {
+    const s = setup();
+    for (const path of ["/api/auth/challenge", "/api/auth/verify", "/api/auth/logout"]) {
+      for (const ct of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"]) {
+        const r = await s.req(path, { method: "POST", body: "{}", headers: { "content-type": ct } });
+        expect(r.res.status, `${path} ${ct}`).toBe(415);
+        expect(code(r.text)).toBe("bad_content_type");
+      }
+    }
+    const charset = await s.req("/api/auth/logout", { method: "POST", headers: { "content-type": "application/json; charset=utf-8" } });
+    expect(charset.res.status).toBe(200);
+  });
+
+  it("403 bad_origin when PUBLIC_ORIGIN is set and Origin differs or is missing", async () => {
+    const s = setup({ config: { publicOrigin: "https://redline.app" } });
+    for (const origin of [undefined, "https://evil.example", "https://redline.app.evil.example"]) {
+      const r = await s.req("/api/auth/logout", { method: "POST", ...(origin && { origin }) });
+      expect(r.res.status, String(origin)).toBe(403);
+      expect(code(r.text)).toBe("bad_origin");
+    }
+    const ok = await s.signIn({ origin: "https://redline.app" });
+    expect(ok.res.status).toBe(200);
+  });
+
+  it("no origin check when PUBLIC_ORIGIN is unset", async () => {
+    const s = setup();
+    expect((await s.req("/api/auth/logout", { method: "POST", origin: "https://anything.example" })).res.status).toBe(200);
   });
 });
 
@@ -224,12 +313,10 @@ describe("GET /api/me/loans", () => {
     const r = await s.req("/api/me/loans", { cookie });
     expect(r.res.status).toBe(200);
     expect(r.json<LoanView[]>().map((l) => l.id)).toEqual(["aa".repeat(32)]);
-    // derived receive + change 0..19
     const asked = s.calls.getUtxos.flat();
     expect(asked).toHaveLength(40);
     expect(asked).toContain(RECEIVE0);
     expect(asked).toContain(CHANGE5);
-    // cached for 60 s per account
     await s.req("/api/me/loans", { cookie });
     expect(s.calls.getUtxos).toHaveLength(1);
     s.setNow(new Date(NOW.getTime() + 61_000));
@@ -259,33 +346,49 @@ describe("GET /api/utxos", () => {
   it("400 on missing, invalid, non-mainnet or too many addresses", async () => {
     const s = setup();
     for (const q of ["", "?addresses=", "?addresses=nope", `?addresses=${RECEIVE0},bchtest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq`, `?addresses=${RECEIVE0.slice("bitcoincash:".length)}`]) {
-      const r = await s.req(`/api/utxos${q}`, { ip: "1.1.1.1" });
+      const r = await s.req(`/api/utxos${q}`, { socketIp: "1.1.1.1" });
       expect(r.res.status, q).toBe(400);
       expect(code(r.text)).toBe("bad_request");
     }
     const many = Array.from({ length: 61 }, () => RECEIVE0).join(",");
-    expect((await s.req(`/api/utxos?addresses=${many}`, { ip: "1.1.1.2" })).res.status).toBe(400);
+    expect((await s.req(`/api/utxos?addresses=${many}`, { socketIp: "1.1.1.2" })).res.status).toBe(400);
     const sixty = Array.from({ length: 60 }, () => RECEIVE0).join(",");
-    expect((await s.req(`/api/utxos?addresses=${sixty}`, { ip: "1.1.1.2" })).res.status).toBe(200);
+    expect((await s.req(`/api/utxos?addresses=${sixty}`, { socketIp: "1.1.1.2" })).res.status).toBe(200);
   });
+});
 
-  it("rate limits /api/utxos and /api/auth/* at 30/min per IP", async () => {
+describe("rate limit (30/min per IP on /api/auth/* and /api/utxos)", () => {
+  it("uses the socket address by default; spoofed x-forwarded-for does not bypass", async () => {
     const s = setup();
-    for (let i = 0; i < 20; i++) expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { ip: "9.9.9.9" })).res.status).toBe(200);
+    for (let i = 0; i < 20; i++) {
+      expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "9.9.9.9", xff: `10.0.0.${i}` })).res.status).toBe(200);
+    }
     for (let i = 0; i < 10; i++) {
-      const r = await s.req("/api/auth/verify", { json: { signedTxHex: "00" }, ip: "9.9.9.9" });
+      const r = await s.req("/api/auth/verify", { json: { signedTxHex: "00" }, socketIp: "9.9.9.9", xff: `11.0.0.${i}` });
       expect(r.res.status).toBe(401);
     }
-    const limited = await s.req(`/api/utxos?addresses=${RECEIVE0}`, { ip: "9.9.9.9" });
+    const limited = await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "9.9.9.9", xff: "12.0.0.1" });
     expect(limited.res.status).toBe(429);
     expect(code(limited.text)).toBe("rate_limited");
-    expect((await s.req("/api/auth/logout", { method: "POST", ip: "9.9.9.9" })).res.status).toBe(429);
+    expect((await s.req("/api/auth/logout", { method: "POST", socketIp: "9.9.9.9" })).res.status).toBe(429);
     // other IPs and non-limited routes unaffected
-    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { ip: "8.8.8.8" })).res.status).toBe(200);
-    expect((await s.req("/api/loans", { ip: "9.9.9.9" })).res.status).toBe(200);
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "8.8.8.8" })).res.status).toBe(200);
+    expect((await s.req("/api/loans", { socketIp: "9.9.9.9" })).res.status).toBe(200);
     // next window
     s.setNow(new Date(NOW.getTime() + 60_000));
-    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { ip: "9.9.9.9" })).res.status).toBe(200);
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "9.9.9.9" })).res.status).toBe(200);
+  });
+
+  it("behind a trusted proxy uses the right-most x-forwarded-for entry; a spoofed left-most entry does not bypass", async () => {
+    const s = setup({ config: { trustProxy: true } });
+    for (let i = 0; i < 30; i++) {
+      const r = await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: `6.6.6.${i}, 9.9.9.9` });
+      expect(r.res.status).toBe(200);
+    }
+    const limited = await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "1.2.3.4, 9.9.9.9" });
+    expect(limited.res.status).toBe(429);
+    // a different real client behind the same proxy is fine
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "9.9.9.9, 7.7.7.7" })).res.status).toBe(200);
   });
 });
 

@@ -37,7 +37,7 @@ const noChain: Chain = {
   getUtxos: async () => [],
 };
 const appFor = (r: ChainReader) =>
-  createApp({ reader: r, db: openDb(":memory:"), chain: noChain, config: { loginDomain: "localhost", secureCookies: false }, now: () => NOW });
+  createApp({ reader: r, db: openDb(":memory:"), chain: noChain, config: { loginDomain: "localhost", secureCookies: false, trustProxy: false, publicOrigin: undefined }, now: () => NOW });
 
 describe("server app", () => {
   it("503 not_ready before first refresh", async () => {
