@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ApiError, LoansResponse, LoanView } from "@redline/api-types";
 import { computeLoanViews } from "@redline/paryon-decoder";
 import { createApp } from "../src/app.js";
+import { openDb } from "../src/db.js";
+import type { Chain } from "../src/electrum.js";
 import type { ChainReader, LoanState } from "../src/reader.js";
 
 const views = computeLoanViews(
@@ -29,7 +31,13 @@ const fakeReader = (s: LoanState | null, error: string | null = null): ChainRead
 });
 const NOW = new Date("2026-11-20T12:00:00.000Z");
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
-const appFor = (r: ChainReader) => createApp({ reader: r, now: () => NOW });
+const noChain: Chain = {
+  getSourceOutput: async () => null,
+  isUnspentOrSpentBy: async () => false,
+  getUtxos: async () => [],
+};
+const appFor = (r: ChainReader) =>
+  createApp({ reader: r, db: openDb(":memory:"), chain: noChain, config: { loginDomain: "localhost", secureCookies: false }, now: () => NOW });
 
 describe("server app", () => {
   it("503 not_ready before first refresh", async () => {
@@ -105,7 +113,7 @@ describe("server app", () => {
   });
 
   it("unknown /api path is 404 not_found", async () => {
-    const res = await appFor(fakeReader(state(ago(0)))).request("/api/me");
+    const res = await appFor(fakeReader(state(ago(0)))).request("/api/watches");
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiError).error.code).toBe("not_found");
   });
