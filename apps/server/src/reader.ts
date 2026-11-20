@@ -76,8 +76,13 @@ export function createChainReader(opts: {
       } finally {
         clearTimeout(timer);
       }
-      if (snap.loans.length === 0 && state !== null && state.loans.length > 0) {
-        throw new Error(`Refresh returned 0 loans (previous state had ${state.loans.length}); keeping previous state`);
+      // mainnet always has loans: an empty snapshot is a bad read, even as the first state
+      if (snap.loans.length === 0) {
+        throw new Error(
+          state === null
+            ? "Refresh returned 0 loans; refusing an empty first state"
+            : `Refresh returned 0 loans (previous state had ${state.loans.length}); keeping previous state`,
+        );
       }
       const loans = computeLoanViews(snap.loans, snap.priceUsd).sort(byDistance);
       const next: LoanState = {

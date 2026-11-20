@@ -93,11 +93,14 @@ describe("chain reader", () => {
     expect(r.lastError()).toMatch(/0 loans/);
   });
 
-  it("0 loans on the very first refresh is accepted", async () => {
+  it("0 loans on the very first refresh is a failure too (never happens on mainnet); no update fires", async () => {
     const r = mk(async () => snap([]));
+    const calls: unknown[] = [];
+    r.onUpdate((p, n) => calls.push([p, n]));
     await r.refresh();
-    expect(r.current()!.loans).toEqual([]);
-    expect(r.lastError()).toBeNull();
+    expect(r.current()).toBeNull();
+    expect(r.lastError()).toMatch(/0 loans/);
+    expect(calls).toEqual([]);
   });
 
   it("skips overlapping refreshes", async () => {
