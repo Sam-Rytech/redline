@@ -17,6 +17,17 @@ server: { proxy: { "/api": "http://localhost:8787" } }
 ```
 Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay same-origin.
 
+## Real server
+
+```bash
+pnpm dev:server        # http://localhost:8787/api  (stop the mock first: same port)
+```
+Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s. Only `GET /api/loans`, `GET /api/loans/:id` and `GET /api/health` exist so far; every other `/api/*` path returns 404 `not_found` (auth, watches, Telegram and invoices still need the mock).
+
+- For the first few seconds after start, `/api/loans` and `/api/loans/:id` return 503 `{ "error": { "code": "not_ready", ... } }`. Show a loading state and retry.
+- Loans come sorted riskiest first (stranded loans last).
+- `GET /api/health` always returns 200: `{ ok, blockHeight, updatedAt, stale, lastError }`. `stale` is true when there is no data yet or it is older than 5 minutes; `lastError` is the last failed refresh (the previous good data keeps being served).
+
 ## Endpoints
 
 Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with debt 0 that still hold collateral (fully redeemed, unclaimed) and their total collateral in BCH.

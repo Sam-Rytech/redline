@@ -36,6 +36,21 @@ importers:
         specifier: 4.13.19
         version: 4.13.19
 
+  apps/server:
+    dependencies:
+      '@hono/node-server':
+        specifier: 2.1.9
+        version: 2.1.9(hono@4.13.19)
+      '@redline/api-types':
+        specifier: workspace:*
+        version: link:../../packages/api-types
+      '@redline/paryon-decoder':
+        specifier: workspace:*
+        version: link:../../packages/paryon-decoder
+      hono:
+        specifier: 4.13.19
+        version: 4.13.19
+
   packages/api-types: {}
 
   packages/paryon-decoder:
