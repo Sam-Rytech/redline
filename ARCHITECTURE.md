@@ -107,7 +107,7 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 - Oracle pubkey = General Protocols oracle (oracles.cash)
 
 **Finding all loans**
-- `Loan.cash` has an **empty constructor** → every loan uses identical bytecode → one P2SH address. Compute it from `@paryonusd/contracts@1.1.0` artifact (`paryonArtifacts`) with CashScript `Contract` (no args, P2SH32). ⚠ VERIFY the address against a known loan tx.
+- `Loan.cash` has an **empty constructor** → every loan uses identical bytecode → one P2SH address. Compute it from `@paryonusd/contracts@1.1.0` artifact (`paryonArtifacts`) with CashScript `Contract` (no args, P2SH32). ✅ Verified: `bitcoincash:pv8zrfxplp50apvppy5ku5mjp3gqgkp94dvwf82lg0st4ptk5agfyrtpjvf8a` (194 loan UTXOs on 20 Nov 2026).
 - Fulcrum `blockchain.address.listunspent` (with token data) on that address → all loan UTXOs (~160).
 - Keep UTXOs whose token `category == paryonTokenId`, NFT capability `mutable`, commitment length **27**, first byte `0x01`.
 
@@ -126,14 +126,14 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 | 23 | 2 | minRateManager |
 | 25 | 2 | maxRateManager |
 
-⚠ VERIFY: byte order (assume little-endian, CashScript convention), PUSD decimals (assume 2 — check BCMR), rate units (0.05% steps up to 119.6% ⇒ likely basis points), and that **collateral = the loan UTXO's satoshi value**. Gate: decoded values for 5 loans must equal stats.paryonusd.com exactly.
+✅ Verified (G2, 20 Nov 2026 — totals and 6 loans match stats.paryonusd.com): fields are **little-endian**; PUSD has **2 decimals**; **collateral = the loan UTXO's satoshi value** (the liquidate contract uses `tx.inputs[1].value`); interest rates are **per 10,000,000 per period** (period = 144 blocks ≈ 1 day), so annual % = `raw × 365 / 100000` (max raw 32767 ⇒ 119.6 %).
 
 **Loan ↔ loan key**
-- The loan's sidecar is the next output of the same tx (`vout+1`); it holds an immutable NFT whose **category = loanTokenId**. Fetch the raw tx (`blockchain.transaction.get`) and read output `vout+1`.
+- The loan's sidecar is the next output of the same tx (`vout+1`); it holds an immutable NFT whose **category = loanTokenId**. ✅ Verified: sidecars sit at the LoanSidecar contract address (`bitcoincash:pdugdfdd9p84460sntu8rhmj75g8k7uaee699wzj5489l3n99h7s7f49drdgu`), so one `listunspent` on it maps every loan — no per-loan tx fetch.
 - The user's **loan key** = a *minting* NFT of category `loanTokenId` in their wallet.
 
 **Price**
-- Primary: on-chain price contract UTXO (commitment `0x00 | sequence (4) | pricedata (4)`). Note the migration `PriceContract` → `PriceContractGuarded`. ⚠ VERIFY current address and price units.
+- Primary: on-chain price contract UTXO (commitment `0x00 | sequence (4) | pricedata (4)`). Note the migration `PriceContract` → `PriceContractGuarded`. ✅ Verified: current price UTXO is at the **PriceContractGuarded** address (`bitcoincash:pdws0e456rwhzuxahv5jduryn493prvjrmu6ksegq052m5g048jp2tl4l6chh`); price is **US cents per BCH**, little-endian (e.g. `0x4a54` = 19028 = $190.28). The old PriceContract address is empty.
 - Fallback: General Protocols oracle via oracles.cash (same oracle the contracts trust).
 
 **Metrics (pure functions)**
@@ -143,7 +143,7 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 - `debtAhead = Σ debt of active loans with currentInterestRate < mine` (+ all loans with debt < 100 PUSD, which are redeemable regardless of rate)
 - `redemptionInProgress = amountBeingRedeemed > 0`
 - `pendingRateChange = nextInterestRate ≠ currentInterestRate`
-- `stranded = debt == 0 && sats > dust` ⚠ VERIFY a fully-redeemed loan stays at the loan address with leftover sats.
+- `stranded = debt == 0 && sats > dust` ✅ Verified: 54–55 debt-0 loans still sit at the loan address holding ~353 BCH (20 Nov 2026).
 
 ### 3.3 `apps/server`
 
@@ -221,7 +221,7 @@ loan_snapshots(block_height, loan_token_id, debt, collateral_sats, rate, next_ra
 | Wallet connection | `@wizardconnect/dapp` + `@wizardconnect/core` | **Pin both to the same exact version** (0.2.7 at time of writing). `dapp` declares `core: "*"`, and 5 releases shipped 12–13 Nov — unpinned installs can break overnight |
 | Tx building | `cashscript` | Pin one exact version. Use `generateWcTransactionObject()` and attach `inputPaths` yourself (official docs); a preview doc mentions `generateWizardConnectTransactionObject()` — don't rely on it |
 | BCH primitives / VM verify | `@bitauth/libauth` v3 | |
-| Electrum | `@electrum-cash/network` → public Fulcrum (WSS) | ⚠ VERIFY server supports token data in `listunspent` |
+| Electrum | `@electrum-cash/network` → public Fulcrum (WSS) | ✅ Fulcrum 2.1.4 returns token data in `listunspent`. Hosts used (with fallback): bch.imaginary.cash, electrum.imaginary.cash, bch.loping.net, fulcrum.greyh.at, electroncash.dk |
 | Paryon artifacts | `@paryonusd/contracts@1.1.0` | Loan address + contract shapes |
 | Server | Hono (or Express) + `better-sqlite3` | |
 | Bot | `grammy` | Long polling, no webhook needed |

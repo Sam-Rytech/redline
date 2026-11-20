@@ -3,8 +3,12 @@
 
 export const API_PREFIX = "/api";
 export const FREE_WATCH_LIMIT = 1;
-/** Official Paryon dApp; alerts and loan cards deep-link here. ⚠ VERIFY URL. */
-export const PARYON_APP_URL = "https://app.paryonusd.com";
+/**
+ * Official Paryon dApp; alerts and loan cards link here. Verified 20 Nov 2026:
+ * it is the "Go to dApp" link on stats.paryonusd.com (app.paryonusd.com is a 404).
+ * The dApp has no per-loan URLs, so every link goes to the app itself.
+ */
+export const PARYON_APP_URL = "https://paryonusd.com/app";
 
 // ---------- shared ----------
 export type ISODate = string; // e.g. "2026-11-20T12:00:00.000Z"
