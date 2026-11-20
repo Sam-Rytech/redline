@@ -1,5 +1,5 @@
 import { binToHex, decodeTransaction, hashTransaction, hexToBin, lockingBytecodeToCashAddress, sha256, utf8ToBin } from "@bitauth/libauth";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ApiError, ChallengeResponse, LoanView, MeResponse, Utxo } from "@redline/api-types";
 import { computeLoanViews } from "@redline/paryon-decoder";
 import { FUNDING_TXID, makeLoginTx, makeWallet } from "@redline/wizard-login/testing";
@@ -71,7 +71,7 @@ function setup(o: { secureCookies?: boolean; state?: LoanState | null; spentElse
     reader: reader(o.state === undefined ? loanState : o.state),
     db,
     chain,
-    config: { loginDomain: DOMAIN, secureCookies: o.secureCookies ?? false, trustProxy: false, publicOrigin: undefined, ...o.config },
+    config: { loginDomain: DOMAIN, secureCookies: o.secureCookies ?? false, trustProxyHops: 0, logXff: false, publicOrigin: undefined, ...o.config },
     now: () => now,
   });
   const bodies: string[] = [];
@@ -379,8 +379,8 @@ describe("rate limit (30/min per IP on /api/auth/* and /api/utxos)", () => {
     expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "9.9.9.9" })).res.status).toBe(200);
   });
 
-  it("behind a trusted proxy uses the right-most x-forwarded-for entry; a spoofed left-most entry does not bypass", async () => {
-    const s = setup({ config: { trustProxy: true } });
+  it("1 hop uses the right-most x-forwarded-for entry; a spoofed left-most entry does not bypass", async () => {
+    const s = setup({ config: { trustProxyHops: 1 } });
     for (let i = 0; i < 30; i++) {
       const r = await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: `6.6.6.${i}, 9.9.9.9` });
       expect(r.res.status).toBe(200);
@@ -389,6 +389,55 @@ describe("rate limit (30/min per IP on /api/auth/* and /api/utxos)", () => {
     expect(limited.res.status).toBe(429);
     // a different real client behind the same proxy is fine
     expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "9.9.9.9, 7.7.7.7" })).res.status).toBe(200);
+  });
+
+  it("2 hops uses the second-from-right entry (Vercel -> Railway); spoofed left entries do not bypass", async () => {
+    const s = setup({ config: { trustProxyHops: 2 } });
+    // chain: <client-spoofed...>, real client, vercel edge
+    for (let i = 0; i < 30; i++) {
+      const r = await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: `6.6.6.${i}, 5.5.5.5, 3.3.3.3` });
+      expect(r.res.status).toBe(200);
+    }
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "1.2.3.4, 5.5.5.5, 3.3.3.9" })).res.status).toBe(429);
+    // the right-most entry alone is not the key
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "8.8.8.8, 3.3.3.3" })).res.status).toBe(200);
+  });
+
+  it("falls back to the left-most entry when the header has fewer entries than hops", async () => {
+    const s = setup({ config: { trustProxyHops: 3 } });
+    for (let i = 0; i < 30; i++) {
+      expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "5.5.5.5, 3.3.3.3" })).res.status).toBe(200);
+    }
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.1", xff: "5.5.5.5" })).res.status).toBe(429);
+    // no header at all: socket address
+    expect((await s.req(`/api/utxos?addresses=${RECEIVE0}`, { socketIp: "100.64.0.2" })).res.status).toBe(200);
+  });
+
+  it("LOG_XFF logs the raw x-forwarded-for of the first 5 /api/auth requests only", async () => {
+    const s = setup({ config: { logXff: true } });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 8; i++) await s.req("/api/utxos?addresses=" + RECEIVE0, { socketIp: "4.4.4.4", xff: "ignored" });
+      expect(log).not.toHaveBeenCalled();
+      for (let i = 0; i < 8; i++) await s.req("/api/auth/verify", { json: { signedTxHex: "00" }, socketIp: `4.4.4.${i}`, xff: `1.1.1.${i}, 2.2.2.2` });
+      const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("x-forwarded-for"));
+      expect(lines).toHaveLength(5);
+      expect(lines[0]).toContain("1.1.1.0, 2.2.2.2");
+      expect(lines.join("\n")).not.toContain("1.1.1.5");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("does not log x-forwarded-for unless LOG_XFF is set", async () => {
+    const s = setup();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await s.req("/api/auth/verify", { json: { signedTxHex: "00" }, xff: "1.1.1.1" });
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 

@@ -241,7 +241,7 @@ Env vars: `ELECTRUM_URL`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN
 - Session cookie: HttpOnly, Secure (default; `COOKIE_SECURE=false` only for plain-http non-localhost testing), SameSite=Lax; new random session per login, stored hashed.
 - CSRF: every POST must be `Content-Type: application/json` (415 otherwise); with `PUBLIC_ORIGIN` set, `Origin` must match (403). POST bodies capped at 32 KB (413).
 - Telegram link tokens: single-use, 10-minute expiry.
-- Rate-limit `/auth/*` and the UTXO proxy (30/min per IP). Client IP = socket address, or with `TRUST_PROXY=true` the right-most `x-forwarded-for` entry (the one the proxy appended).
+- Rate-limit `/auth/*` and the UTXO proxy (30/min per IP). Client IP = socket address, or with `TRUST_PROXY_HOPS=N` the Nth `x-forwarded-for` entry from the right (1 = the one the nearest proxy appended; Vercel rewrite -> Railway needs the real chain checked on staging with `LOG_XFF=1` first). Legacy `TRUST_PROXY=true` = 1 hop.
 - Electrum calls time out after 15 s and the connection is closed.
 - Keep xpubs server-side only; never show them in the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
 - No private keys anywhere on the server. The merchant address is receive-only.

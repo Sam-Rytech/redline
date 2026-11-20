@@ -155,7 +155,7 @@ function setup(o: { utxos?: Utxo[]; dropCookies?: boolean } = {}) {
     reader,
     db: openDb(":memory:"),
     chain,
-    config: { loginDomain: DOMAIN, secureCookies: false, trustProxy: false, publicOrigin: undefined },
+    config: { loginDomain: DOMAIN, secureCookies: false, trustProxyHops: 0, logXff: false, publicOrigin: undefined },
     now: () => NOW,
   });
   return { app, seen, ...browser(app, o) };

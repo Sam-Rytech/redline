@@ -11,8 +11,14 @@ export interface ServerConfig {
    * COOKIE_SECURE=false only for plain-http testing on a non-localhost host.
    */
   secureCookies: boolean;
-  /** behind a proxy that appends the real client IP to x-forwarded-for (TRUST_PROXY=true|1) */
-  trustProxy: boolean;
+  /**
+   * Number of trusted proxy hops in front of the server (TRUST_PROXY_HOPS, default 0).
+   * 0: client IP = socket address. N>0: the Nth entry from the RIGHT of x-forwarded-for.
+   * Legacy TRUST_PROXY=true|1 means 1 hop.
+   */
+  trustProxyHops: number;
+  /** LOG_XFF=1: log the raw x-forwarded-for of the first 5 /api/auth requests (to verify the hop count) */
+  logXff: boolean;
   /** when set, POSTs must carry exactly this Origin header (PUBLIC_ORIGIN) */
   publicOrigin: string | undefined;
 }
@@ -25,6 +31,15 @@ const positive = (v: string | undefined, fallback: number, min = 0): number => {
 
 const text = (v: string | undefined, fallback: string): string => (v === undefined || v.trim() === "" ? fallback : v.trim());
 
+function parseHops(env: Record<string, string | undefined>): number {
+  const raw = env.TRUST_PROXY_HOPS?.trim();
+  if (raw !== undefined && raw !== "") {
+    if (!/^\d+$/.test(raw)) throw new Error(`TRUST_PROXY_HOPS must be an integer >= 0, got "${raw}"`);
+    return Number(raw);
+  }
+  return ["true", "1"].includes(env.TRUST_PROXY?.trim().toLowerCase() ?? "") ? 1 : 0;
+}
+
 export function parseConfig(env: Record<string, string | undefined>): ServerConfig {
   const origin = env.PUBLIC_ORIGIN?.trim();
   return {
@@ -35,7 +50,8 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     loginDomain: text(env.LOGIN_DOMAIN, "localhost"),
     dbPath: text(env.DB_PATH, "./data/redline.db"),
     secureCookies: env.COOKIE_SECURE?.trim().toLowerCase() !== "false",
-    trustProxy: ["true", "1"].includes(env.TRUST_PROXY?.trim().toLowerCase() ?? ""),
+    trustProxyHops: parseHops(env),
+    logXff: ["1", "true"].includes(env.LOG_XFF?.trim().toLowerCase() ?? ""),
     publicOrigin: origin ? origin.replace(/\/+$/, "") : undefined,
   };
 }

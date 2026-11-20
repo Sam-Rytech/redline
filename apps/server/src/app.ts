@@ -52,7 +52,8 @@ export interface AppDeps {
   reader: ChainReader;
   db: Db;
   chain: Chain;
-  config: Pick<ServerConfig, "loginDomain" | "secureCookies" | "trustProxy" | "publicOrigin">;
+  config: Pick<ServerConfig, "loginDomain" | "secureCookies" | "trustProxyHops" | "publicOrigin"> &
+    Partial<Pick<ServerConfig, "logXff">>;
   now?: () => Date;
 }
 
@@ -87,16 +88,26 @@ export function createApp(deps: AppDeps) {
     }
   };
   /**
-   * TRUST_PROXY=false: the TCP peer. TRUST_PROXY=true: the right-most x-forwarded-for entry,
-   * i.e. the one our proxy appended; everything left of it is client-controlled.
+   * hops=0: the TCP peer. hops=N: the Nth x-forwarded-for entry from the right (1 = the one our
+   * nearest proxy appended); everything left of that is client-controlled. A header with fewer
+   * than N entries falls back to its left-most entry.
    */
   const clientIp = (c: Context): string => {
-    if (config.trustProxy) {
-      const last = c.req.header("x-forwarded-for")?.split(",").pop()?.trim();
-      if (last) return last;
+    if (config.trustProxyHops > 0) {
+      const parts = (c.req.header("x-forwarded-for") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+      if (parts.length > 0) return parts[Math.max(0, parts.length - config.trustProxyHops)]!;
     }
     return socketIp(c);
   };
+  // LOG_XFF=1: diagnostic to find the real header chain on staging; never more than 5 lines
+  let xffLogged = 0;
+  app.use("/auth/*", async (c, next) => {
+    if (config.logXff && xffLogged < 5) {
+      xffLogged++;
+      console.log(`x-forwarded-for (${xffLogged}/5): ${c.req.header("x-forwarded-for") ?? "(none)"}`);
+    }
+    await next();
+  });
   const rateLimit = async (c: Context, next: () => Promise<void>) => {
     const w = Math.floor(now().getTime() / RATE_WINDOW_MS);
     if (w !== windowId) {
