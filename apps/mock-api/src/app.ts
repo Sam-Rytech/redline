@@ -42,6 +42,14 @@ export function createApp() {
 
   const authed = (c: Context) => state.signedIn && getCookie(c, SESSION_COOKIE) === SESSION_VALUE;
 
+  // same as the real server: every POST must declare JSON (415 before anything else)
+  app.use("*", async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    const type = c.req.header("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (type !== "application/json") return c.json(err("bad_content_type", "Send Content-Type: application/json"), 415);
+    await next();
+  });
+
   app.use("*", async (c, next) => {
     const p = c.req.path;
     const guarded = PROTECTED.some((x) => p === x || p.startsWith(x + "/"));

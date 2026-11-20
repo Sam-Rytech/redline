@@ -146,9 +146,33 @@ describe("mock api", () => {
     expect(((await dup.json()) as { error: { code: string } }).error.code).toBe("watch_exists");
   });
 
+  it("rejects every POST without Content-Type: application/json (415), like the real server", async () => {
+    const app = createApp();
+    const code = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+    for (const headers of [undefined, { "content-type": "text/plain" }, { "content-type": "application/x-www-form-urlencoded" }]) {
+      const res = await app.request("/api/auth/verify", { method: "POST", headers, body: JSON.stringify({ signedTxHex: "00" }) });
+      expect(res.status).toBe(415);
+      expect(await code(res)).toBe("bad_content_type");
+    }
+    // logout too (bodyless fetch has no content type), and before the auth check
+    expect((await app.request("/api/auth/logout", { method: "POST" })).status).toBe(415);
+    expect((await app.request("/api/watches", { method: "POST", body: "{}" })).status).toBe(415);
+    // charset parameter is fine; JSON body `{}` on logout is fine
+    const ok = await app.request("/api/auth/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: "{}",
+    });
+    expect(ok.status).toBe(200);
+  });
+
   it("maps malformed JSON to 400 and unknown paths to 404", async () => {
     const app = createApp();
-    const res = await app.request("/api/auth/verify", { method: "POST", body: "not json" });
+    const res = await app.request("/api/auth/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("bad_request");
     const nope = await app.request("/api/nope");

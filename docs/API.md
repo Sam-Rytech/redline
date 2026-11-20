@@ -34,7 +34,7 @@ Env: `LOGIN_DOMAIN` (default `localhost`; must match what the client puts in the
 
 Full protocol: ARCHITECTURE.md §3.1. Code: `packages/wizard-login` (`protocol.ts` shared, `server/` verification). The browser helper `wizardLogin` (see **Sign-in (front end)** below) does all of this for you; the steps are listed for reference (`buildUnsignedLoginTx` builds the tx).
 
-Every POST must send `Content-Type: application/json` (else 415 `bad_content_type`), a body ≤ 32 KB (else 413 `too_large`), and when `PUBLIC_ORIGIN` is set a matching `Origin` (else 403 `bad_origin`). Use `credentials: "include"` so the cookies flow.
+Every POST must send `Content-Type: application/json` (else 415 `bad_content_type`), a body ≤ 32 KB (else 413 `too_large`), and when `PUBLIC_ORIGIN` is set a matching `Origin` (else 403 `bad_origin`). Use `credentials: "include"` so the cookies flow. Always send the JSON content type, including `POST /api/auth/logout` with body `{}` (a bodyless fetch sends no content type and gets 415). The mock enforces this too, so the front end behaves the same against both.
 
 1. Get the wallet's `receive`/`change` xpubs (mainnet), list the **receive** addresses' UTXOs with `GET /api/utxos`, pick the smallest token-free UTXO ≥ 2,000 sats on the receive path.
 2. `POST /api/auth/challenge` `ChallengeRequest` (`path: ["receive", index]`) → `ChallengeResponse { nonce, expiry, domain }` (valid 300 s, single use) plus an HttpOnly `rl_chal` cookie binding the challenge to this browser. 400 `bad_request` / `bad_xpub` (invalid, non-mainnet, or receive = change) / `bad_path` (not the receive path).
