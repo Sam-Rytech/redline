@@ -60,3 +60,25 @@ describe("computeLoanViews", () => {
     expect(r!.stranded).toBe(false);
   });
 });
+
+describe("summarize", () => {
+  it("summarises loans incl. stranded", async () => {
+    const { summarize, computeLoanViews } = await import("../src/index.js");
+    const views = computeLoanViews(
+      [
+        { ...base, id: "a", debtPusd: 100, collateralSats: 1_00000000 }, // liq 110, distance ~0.42
+        { ...base, id: "b", debtPusd: 100, collateralSats: 5500_0000 }, // liq 200 > price, within 20pct
+        { ...base, id: "c", debtPusd: 0, collateralSats: 3_00000000 }, // stranded
+      ],
+      190,
+    );
+    expect(summarize(views)).toEqual({
+      total: 3,
+      within20pct: 1,
+      totalCollateralBch: 1 + 0.55 + 3,
+      totalDebtPusd: 200,
+      strandedCount: 1,
+      strandedBch: 3,
+    });
+  });
+});

@@ -57,6 +57,9 @@ export interface LoansSummary {
   within20pct: number;
   totalCollateralBch: number;
   totalDebtPusd: number;
+  /** Loans with debt 0 that still hold collateral (fully redeemed, unclaimed) */
+  strandedCount: number;
+  strandedBch: number;
 }
 
 /** GET /api/loans */

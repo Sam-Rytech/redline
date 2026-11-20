@@ -19,6 +19,8 @@ Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay
 
 ## Endpoints
 
+Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with debt 0 that still hold collateral (fully redeemed, unclaimed) and their total collateral in BCH.
+
 | Method | Path | Auth | Returns |
 |---|---|---|---|
 | GET | /api/health | – | `{ ok: true }` |

@@ -3,7 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p .", "test": "vitest run" },
-  "dependencies": { "@redline/api-types": "workspace:*" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "verify:live": "tsx scripts/verify-live.ts"
+  },
+  "dependencies": {
+    "@paryonusd/contracts": "1.1.0",
+    "@redline/api-types": "workspace:*",
+    "cashscript": "0.14.0"
+  }
 }

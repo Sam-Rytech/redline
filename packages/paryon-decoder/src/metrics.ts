@@ -2,6 +2,7 @@ import {
   PARYON_APP_URL,
   type LoanStatus,
   type LoanView,
+  type LoansSummary,
   type RiskBand,
 } from "@redline/api-types";
 
@@ -65,4 +66,16 @@ export function computeLoanViews(raw: RawLoan[], priceUsd: number): LoanView[] {
       paryonUrl: PARYON_APP_URL,
     };
   });
+}
+
+export function summarize(loans: LoanView[]): LoansSummary {
+  const stranded = loans.filter((l) => l.stranded);
+  return {
+    total: loans.length,
+    within20pct: loans.filter((l) => l.distanceToLiquidation !== null && l.distanceToLiquidation < 0.2).length,
+    totalCollateralBch: loans.reduce((a, l) => a + l.collateralBch, 0),
+    totalDebtPusd: loans.reduce((a, l) => a + l.debtPusd, 0),
+    strandedCount: stranded.length,
+    strandedBch: stranded.reduce((a, l) => a + l.collateralBch, 0),
+  };
 }

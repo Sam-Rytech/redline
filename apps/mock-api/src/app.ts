@@ -14,7 +14,7 @@ import type {
   Watch,
 } from "@redline/api-types";
 import { PRO_PASS_DAYS, PRO_PASS_USD } from "@redline/api-types";
-import { computeLoanViews } from "@redline/paryon-decoder";
+import { computeLoanViews, summarize } from "@redline/paryon-decoder";
 import { MOCK_BLOCK_HEIGHT, MOCK_PRICE_USD, makeRawLoans } from "./fixtures.js";
 import { SESSION_COOKIE, SESSION_VALUE, me, newState } from "./state.js";
 
@@ -63,12 +63,7 @@ export function createApp() {
       blockHeight: MOCK_BLOCK_HEIGHT,
       priceUsd: MOCK_PRICE_USD,
       updatedAt: new Date().toISOString(),
-      summary: {
-        total: loans.length,
-        within20pct: loans.filter((l) => l.distanceToLiquidation !== null && l.distanceToLiquidation < 0.2).length,
-        totalCollateralBch: loans.reduce((a, l) => a + l.collateralBch, 0),
-        totalDebtPusd: loans.reduce((a, l) => a + l.debtPusd, 0),
-      },
+      summary: summarize(loans),
       loans,
     };
     return c.json(body);

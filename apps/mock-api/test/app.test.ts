@@ -29,6 +29,10 @@ describe("mock api", () => {
     expect(body.summary.within20pct).toBe(
       body.loans.filter((l) => l.distanceToLiquidation !== null && l.distanceToLiquidation < 0.2).length,
     );
+    const stranded = body.loans.filter((l) => l.stranded);
+    expect(body.summary.strandedCount).toBe(stranded.length);
+    expect(body.summary.strandedCount).toBeGreaterThan(0);
+    expect(body.summary.strandedBch).toBeCloseTo(stranded.reduce((a, l) => a + l.collateralBch, 0), 8);
   });
 
   it("returns one loan or 404", async () => {
