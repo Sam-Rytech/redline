@@ -22,9 +22,9 @@ Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay
 ```bash
 pnpm dev:server        # http://localhost:8787/api  (stop the mock first: same port)
 ```
-Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s. Real routes so far: `GET /api/health`, `GET /api/loans`, `GET /api/loans/:id`, `POST /api/auth/challenge`, `POST /api/auth/verify`, `POST /api/auth/logout`, `GET /api/me`, `GET /api/me/loans`, `GET /api/utxos`. Every other `/api/*` path returns 404 `not_found` (watches, Telegram and invoices still need the mock).
+Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s (after a failed refresh it retries once after 10 s). Real routes so far: `GET /api/health`, `GET /api/loans`, `GET /api/loans/:id`, `POST /api/auth/challenge`, `POST /api/auth/verify`, `POST /api/auth/logout`, `GET /api/me`, `GET /api/me/loans`, `GET /api/utxos`, `GET/POST /api/watches`, `PATCH/DELETE /api/watches/:id`, `POST /api/telegram/link-token`, `POST /api/telegram/unlink`. Every other `/api/*` path returns 404 `not_found` (invoices still need the mock).
 
-Env: `LOGIN_DOMAIN` (default `localhost`; must match what the client puts in the login tx), `DB_PATH` (default `./data/redline.db`), `COOKIE_SECURE` (cookies are `Secure` by default, which works on `http://localhost`; set `false` only for plain-http testing on another host), `TRUST_PROXY_HOPS` (integer >= 0, default 0 = rate limit by socket address; N = the Nth `x-forwarded-for` entry from the right, 1 = right-most; fewer entries than N falls back to the left-most; legacy `TRUST_PROXY=true` means 1; an invalid value fails at start). Behind Vercel rewrite -> Railway, set `TRUST_PROXY_HOPS` after checking the real header chain on staging (log it once with `LOG_XFF=1`, which logs the raw `x-forwarded-for` of the first 5 `/api/auth` requests, never more), `PUBLIC_ORIGIN` (e.g. `https://redline.app`; when set, every POST must send that exact `Origin`). Node prints a one-line SQLite `ExperimentalWarning` at start; harmless.
+Env: `LOGIN_DOMAIN` (default `localhost`; must match what the client puts in the login tx), `DB_PATH` (default `./data/redline.db`), `COOKIE_SECURE` (cookies are `Secure` by default, which works on `http://localhost`; set `false` only for plain-http testing on another host), `TRUST_PROXY_HOPS` (integer >= 0, default 0 = rate limit by socket address; N = the Nth `x-forwarded-for` entry from the right, 1 = right-most; fewer entries than N falls back to the left-most; legacy `TRUST_PROXY=true` means 1; an invalid value fails at start). Behind Vercel rewrite -> Railway, set `TRUST_PROXY_HOPS` after checking the real header chain on staging (log it once with `LOG_XFF=1`, which logs the raw `x-forwarded-for` of the first 5 `/api/auth` requests, never more), `PUBLIC_ORIGIN` (e.g. `https://redline.app`; when set, every POST, PATCH and DELETE must send that exact `Origin`; the bot's `/start` intro also links to it), `ELECTRUM_HOST` (tried first; then the built-in public Fulcrum list `bch.imaginary.cash`, `electrum.imaginary.cash`, `bch.loping.net`, `fulcrum.greyh.at`, `electroncash.dk` on connection failure), `TELEGRAM_BOT_TOKEN` (turns on the Telegram bot and alerts; without it `POST /api/telegram/link-token` returns 503 `telegram_unavailable`; get one by messaging [@BotFather](https://t.me/BotFather) `/newbot`), `BOT_USERNAME` (the bot's username without `@`, used in the `t.me` link; if unset the server asks Telegram via `getMe` at start). Node prints a one-line SQLite `ExperimentalWarning` at start; harmless.
 
 - For the first few seconds after start, `/api/loans` and `/api/loans/:id` return 503 `{ "error": { "code": "not_ready", ... } }`. Show a loading state and retry.
 - Loans come sorted riskiest first (stranded loans last).
@@ -49,6 +49,20 @@ Every POST must send `Content-Type: application/json` (else 415 `bad_content_typ
 - `GET /api/me/loans` → `LoanView[]`: loans whose id matches a **minting** NFT category held on receive/change addresses 0–19 (cached 60 s per account). 401 without a session, 503 `not_ready` before the first chain refresh.
 - `GET /api/utxos?addresses=a,b` → `Utxo[]` (with token data). 1–60 `bitcoincash:` addresses, else 400 `bad_request`.
 - `/api/auth/*` and `/api/utxos` share a limit of 30 requests/min per client IP → 429 `rate_limited`.
+
+### Watches and Telegram alerts (real server)
+
+All need a session (401 `unauthorized`). PATCH must send `Content-Type: application/json` like POST.
+
+- `GET /api/watches` → `Watch[]` (yours, oldest first). `lastBand` is the band at the last alert check (`null` before the first check, and after the loan is gone).
+- `POST /api/watches { loanId, rules? }` → 201 `Watch`. 400 `bad_request` (missing/invalid `loanId`, non-boolean rules), 503 `not_ready` before chain data, 404 `not_found` if the loan is not in the current data, 409 `watch_exists`, 403 `watch_limit` (free plan = 1 watch; Pro = unlimited while `pro_until` is in the future). `rules` defaults to `{ liquidation: true, loanGone: true }`; partial rules are merged.
+- `PATCH /api/watches/:id { rules }` → `Watch` (partial merge). `DELETE /api/watches/:id` → `{ ok: true }`. Someone else's watch → 404 `not_found`.
+- `POST /api/telegram/link-token {}` → `TelegramLinkResponse { token, url: "https://t.me/<bot>?start=<token>", expiresAt }`. Open `url`; the token is single use and valid 10 minutes (only its hash is stored). 503 `telegram_unavailable` when no bot is configured.
+- `POST /api/telegram/unlink {}` → `{ ok: true }`; `GET /api/me` `telegramLinked` reflects the link.
+
+Bot commands (private chat only): `/start <token>` links the chat (one chat per account), `/status` lists your watches (CR, distance, liquidation price, band, or "loan closed"), `/mute` (24 h; `/mute 2h`, `/mute 30m`, max 7 days), `/unmute`, `/help`.
+
+Alerts (checked after every successful refresh): **liquidation bands** — alert once when a loan enters a worse band (watch < 25 %, danger < 15 %, critical < 8 % from liquidation); the band is only re-armed after recovering 3 points past its threshold (e.g. danger → watch needs ≥ 18 %). A new watch is recorded silently unless it is already danger or critical. **Loan gone** — alert once when the loan disappears (closed, repaid or liquidated). Muted or unlinked accounts get no message, but the band still advances (no burst later). At most 20 messages per refresh, most severe first.
 
 ## Sign-in (front end)
 
@@ -105,6 +119,7 @@ Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with deb
 | GET/POST | /api/watches | ✓ | `Watch[]` / `Watch` (201) — 403 `watch_limit` on free plan, 409 `watch_exists` if already watched |
 | PATCH/DELETE | /api/watches/:id | ✓ | `Watch` / `{ ok: true }` |
 | POST | /api/telegram/link-token | ✓ | `TelegramLinkResponse` |
+| POST | /api/telegram/unlink | ✓ | `{ ok: true }` |
 | GET | /api/invoices/quote | ✓ | `InvoiceQuote` |
 | POST | /api/invoices | ✓ | `Invoice` (201) |
 | GET | /api/invoices/:id | ✓ | `Invoice` |

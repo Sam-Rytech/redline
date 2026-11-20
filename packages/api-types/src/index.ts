@@ -129,24 +129,33 @@ export interface Watch {
   id: string;
   loanId: Hex;
   rules: WatchRules;
+  /** band at the last alert evaluation; null before the first one (and after the loan is gone) */
   lastBand: RiskBand | null;
   createdAt: ISODate;
 }
 
 /** GET /api/watches → Watch[] */
-/** POST /api/watches (403 code "watch_limit" when over FREE_WATCH_LIMIT; 409 code "watch_exists" if the loan is already watched) */
+/**
+ * POST /api/watches → Watch (201). 404 "not_found" if the loan is unknown, 503 "not_ready" before chain data,
+ * 409 "watch_exists" if the loan is already watched, 403 "watch_limit" when over FREE_WATCH_LIMIT (not Pro).
+ * Rules default to { liquidation: true, loanGone: true }.
+ */
 export interface CreateWatchRequest {
   loanId: Hex;
   rules?: Partial<WatchRules>;
 }
-/** PATCH /api/watches/:id → Watch */
+/** PATCH /api/watches/:id → Watch (404 if not yours) */
 export interface UpdateWatchRequest {
   rules: Partial<WatchRules>;
 }
-/** DELETE /api/watches/:id → { ok: true } */
+/** DELETE /api/watches/:id → { ok: true } (404 if not yours) */
 
 // ---------- telegram ----------
-/** POST /api/telegram/link-token */
+/**
+ * POST /api/telegram/link-token → TelegramLinkResponse. Token is single use, valid 10 minutes.
+ * 503 "telegram_unavailable" when the server has no bot configured.
+ * POST /api/telegram/unlink → { ok: true } (MeResponse.telegramLinked becomes false).
+ */
 export interface TelegramLinkResponse {
   token: string;
   url: string; // https://t.me/<bot>?start=<token>
