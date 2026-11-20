@@ -18,12 +18,17 @@ export interface ConnectWalletOptions {
   dappName?: string;
   dappIcon?: string;
   relay?: DappRelayOptions;
+  /** relay (Nostr transport) status changes, e.g. to show "reconnecting…" and back */
+  onRelayStatus?: (status: "connected" | "reconnecting" | "disconnected" | "session_deleted", error: string | null) => void;
 }
 
 export function connectWallet(opts: ConnectWalletOptions = {}): WalletConnection {
   // v1: no session persistence → no reconnect after a page reload
   const manager = new DappConnectionManager(opts.dappName ?? "Redline", opts.dappIcon, { session: false });
-  const relay = initiateDappRelay(({ client, status }) => manager.updateConnection(client, status), opts.relay);
+  const relay = initiateDappRelay(({ client, status }) => {
+    manager.updateConnection(client, status);
+    opts.onRelayStatus?.(status.status, status.error);
+  }, opts.relay);
   manager.attachRelay(relay);
 
   let settled = false;

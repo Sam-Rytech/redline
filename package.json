@@ -7,7 +7,8 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "dev:mock": "pnpm --filter @redline/mock-api dev",
-    "dev:server": "pnpm --filter @redline/server dev"
+    "dev:server": "pnpm --filter @redline/server dev",
+    "dev:login": "pnpm --filter @redline/login-demo dev"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

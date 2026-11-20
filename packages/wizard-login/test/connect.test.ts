@@ -65,6 +65,15 @@ describe("connectWallet", () => {
     await expect(c.ready).rejects.toThrow(/closed/i);
   });
 
+  it("reports relay status through onRelayStatus", async () => {
+    const seen: string[] = [];
+    const c = connectWallet({ onRelayStatus: (s, err) => seen.push(`${s}:${err ?? ""}`) });
+    relay.statusCallback!({ client: null, status: { status: "reconnecting", error: "socket closed" } as never });
+    relay.statusCallback!({ client: null, status: { status: "connected", error: null } as never });
+    expect(seen).toEqual(["reconnecting:socket closed", "connected:"]);
+    await c.close();
+  });
+
   it("uses no session persistence (no localStorage reconnect in v1)", () => {
     const c = connectWallet();
     expect(c.manager.loadStoredSession()).toBeNull();

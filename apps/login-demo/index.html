@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redline sign-in demo</title>
+  </head>
+  <body>
+    <main>
+      <h1>Redline wallet sign-in</h1>
+      <p class="muted">
+        Test page for WizardConnect sign-in with a real wallet (Paytaca, Selene). The wallet signs a tiny
+        self-payment that is <strong>not</strong> broadcast. Needs <code>pnpm dev:server</code> on :8787.
+      </p>
+
+      <section>
+        <div class="row">
+          <button id="connect">Connect wallet</button>
+          <button id="disconnect" disabled>Disconnect wallet</button>
+        </div>
+        <p>Status: <span id="status">not connected</span></p>
+        <div id="pairing" hidden>
+          <canvas id="qr" aria-label="WizardConnect pairing QR code"></canvas>
+          <p class="small">
+            Scan with your wallet, or on this device open
+            <a id="uri" href="#" rel="noopener">the pairing link</a>
+            <button id="copy" class="small-btn" type="button">Copy</button>
+          </p>
+        </div>
+      </section>
+
+      <section id="ready" hidden>
+        <p>Receive address 0: <code id="addr0"></code></p>
+        <button id="signin">Sign in</button>
+      </section>
+
+      <section>
+        <div class="row">
+          <button id="me">GET /me</button>
+          <button id="logout">Log out</button>
+        </div>
+      </section>
+
+      <section id="result" hidden>
+        <h2>Signed in</h2>
+        <pre id="me-json"></pre>
+        <p>Login txid: <code id="txid"></code></p>
+        <p class="small" id="g1"></p>
+      </section>
+
+      <section>
+        <h2>Log</h2>
+        <pre id="log"></pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
