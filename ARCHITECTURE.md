@@ -68,23 +68,24 @@ Repo (pnpm workspaces):
 **Protocol (v1)**
 
 1. Client connects via WizardConnect → receives xpubs (`receive`, `change`; `defi` = index 7 if present).
-2. Client derives receive/change addresses (indices 0–19 each), asks the server for UTXOs, picks the **smallest pure-BCH UTXO ≥ 2,000 sats** (no tokens).
-3. `POST /auth/challenge {xpubReceive, outpoint, path:[pathName, index]}` → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint}` and returns them.
+2. Client derives **receive** addresses (indices 0–19), asks the server for UTXOs, picks the **smallest pure-BCH (token-free) UTXO ≥ 2,000 sats** on the receive path. Sign-in must prove control of the receive xpub, because `accountId` is derived from it; change-path UTXOs are refused (`bad_path`).
+3. `POST /auth/challenge {xpubReceive, xpubChange, outpoint, path:["receive", index]}` (mainnet xpubs, receive ≠ change) → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, sha256(binding token)}`, returns `{nonce, expiry, domain}` and sets the binding token as cookie `rl_chal` (HttpOnly, SameSite=Lax, Path=/api/auth, Max-Age=300, Secure). This binds the challenge to the requesting browser, so a login tx that leaks (e.g. a wallet broadcasts it and a mempool watcher copies it) cannot be redeemed by anyone else.
 4. Client builds the login transaction (CashScript `TransactionBuilder`, placeholder P2PKH unlocker):
    - Input 0: the chosen UTXO
    - Output 0: `OP_RETURN` → `"WZL1"` | domain (utf-8) | nonce (16 B) | expiry (uint32 LE)
-   - Output 1: P2PKH back to **the same address**, value = input − fee (fee ≈ 1 sat/byte, ~250–300 sats)
-5. Client calls `signTransaction({ transaction, sourceOutputs, broadcast: false, userPrompt: "Sign in to Redline — this will NOT be sent" }, inputPaths=[[0, pathName, index]])`.
-6. `POST /auth/verify {signedTxHex}`. Server checks, in order:
-   1. Decodes tx; exactly 1 input = challenge outpoint; outputs match the template above.
-   2. OP_RETURN domain == our domain, nonce == stored nonce, not expired, nonce unused.
-   3. **Fetches the source output itself from Electrum** (never trusts client `sourceOutputs`).
-   4. Address of that output == address derived from `xpubReceive`/`change` at the stated path.
-   5. libauth VM `verify` of the full transaction against the fetched source output passes (proves the signature).
+   - Output 1: P2PKH back to **the same address**, value = input − fee (client uses 400 sats; server accepts 200–2,000)
+   - version 2, locktime 0, sequence 0xffffffff, no tokens anywhere; the signature must be **SIGHASH_ALL|FORKID (0x41)** so it commits to the nonce output
+5. Client calls `signTransaction({ transaction, sourceOutputs, broadcast: false, userPrompt: "Sign in to Redline — this will NOT be sent" }, inputPaths=[[0, "receive", index]])`.
+6. `POST /auth/verify {signedTxHex}` (with the `rl_chal` cookie). Server checks, in order:
+   1. Decodes tx; exactly 1 input = challenge outpoint; outputs, version, locktime, sequence match the template above.
+   2. OP_RETURN domain == our domain, nonce known, the browser's `rl_chal` hashes to the stored binding (`challenge_not_bound`), not expired, nonce unused.
+   3. **Fetches the source output itself from Electrum** (never trusts client `sourceOutputs`); it must carry no tokens (`token_source`) and hold ≥ 2,000 sats.
+   4. Address of that output == P2PKH derived from **`xpubReceive`** at the stated index; output 1 pays back to it; fee 200–2,000.
+   5. Unlocking bytecode is exactly `<sig> <pubkey>` with the derived pubkey and a Schnorr or DER signature ending in 0x41; then the libauth VM `verify` of the full transaction against the fetched source output passes.
    6. Outpoint is unspent **or** spent by exactly this txid (covers wallets that broadcast anyway).
 7. Server marks nonce used, sets `accountId = sha256(xpubReceive)`, issues an HttpOnly session cookie (7 days).
 
-**Properties:** no password/email; replay-proof (single-use nonce + expiry); bound to our domain; worst case if broadcast = the user loses ~300 sats of fee, coins return to them.
+**Properties:** no password/email; replay-proof (single-use nonce + expiry); bound to our domain and to the requesting browser; worst case if broadcast = the user loses ~300 sats of fee, coins return to them.
 
 **Fallback mode** (if a wallet ignores `broadcast:false`): same flow, the tx is simply on-chain; check 6 still passes. Show "this wallet sends a tiny self-payment to sign in".
 
@@ -233,10 +234,14 @@ Env vars: `ELECTRUM_URL`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN
 ## 6. Security
 
 - Server fetches every source output itself; never trusts client-supplied UTXO data.
-- Nonces: 16 random bytes, single-use, 5-minute expiry, bound to `LOGIN_DOMAIN`.
-- Session cookie: HttpOnly, Secure, SameSite=Lax; rotate on login.
+- Sign-in proves the **receive** xpub only (account id = sha256(xpubReceive)); a login never rewrites an account's receive xpub.
+- Nonces: 16 random bytes, single-use, 5-minute expiry, bound to `LOGIN_DOMAIN` and to the requesting browser (`rl_chal` HttpOnly cookie; only its hash is stored).
+- Login signatures must be SIGHASH_ALL|FORKID; NONE/SINGLE/ANYONECANPAY are refused (they would not commit to the nonce). The source UTXO must be token-free.
+- Session cookie: HttpOnly, Secure (default; `COOKIE_SECURE=false` only for plain-http non-localhost testing), SameSite=Lax; new random session per login, stored hashed.
+- CSRF: every POST must be `Content-Type: application/json` (415 otherwise); with `PUBLIC_ORIGIN` set, `Origin` must match (403). POST bodies capped at 32 KB (413).
 - Telegram link tokens: single-use, 10-minute expiry.
-- Rate-limit `/auth/*` and the UTXO proxy.
+- Rate-limit `/auth/*` and the UTXO proxy (30/min per IP). Client IP = socket address, or with `TRUST_PROXY=true` the right-most `x-forwarded-for` entry (the one the proxy appended).
+- Electrum calls time out after 15 s and the connection is closed.
 - Keep xpubs server-side only; never show them in the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
 - No private keys anywhere on the server. The merchant address is receive-only.
 
