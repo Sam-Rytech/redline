@@ -16,6 +16,8 @@ export function fakePaymentChain() {
   /** override the node's answer for the next broadcasts (return undefined to fall through) */
   let onBroadcast: ((hex: string) => BroadcastResult | undefined) | null = null;
   let down = false;
+  /** call names that fail as if Electrum were unreachable */
+  const failing = new Set<string>();
 
   /** a confirmed coin; returns its outpoint */
   const addCoin = (op: Outpoint, lockingBytecode: Uint8Array, valueSatoshis: bigint, token?: SourceOutput["token"]) => {
@@ -45,7 +47,7 @@ export function fakePaymentChain() {
 
   const guard = (what: string) => {
     calls.push(what);
-    if (down) throw new Error("connect ECONNREFUSED");
+    if (down || failing.has(what)) throw new Error("connect ECONNREFUSED");
   };
 
   const chain: PaymentChain = {
@@ -55,6 +57,17 @@ export function fakePaymentChain() {
         const c = coins.get(key(o));
         return c ? { output: c.output, unspent: c.spentBy === null } : null;
       });
+    },
+    async getSourceOutputs(ops) {
+      guard("getSourceOutputs");
+      return ops.map((o) => coins.get(key(o))?.output ?? null);
+    },
+    async unspentOutpoints(locks) {
+      guard("unspentOutpoints");
+      const want = new Set(locks.map((l) => binToHex(l)));
+      const out = new Set<string>();
+      for (const [k, c] of coins) if (!c.spentBy && want.has(binToHex(c.output.lockingBytecode))) out.add(k);
+      return out;
     },
     async broadcast(hex) {
       guard("broadcast");
@@ -71,8 +84,7 @@ export function fakePaymentChain() {
         if (!c) return { ok: false, message: "the transaction was rejected by network rules.\n\nMissing inputs" };
         if (c.spentBy) return { ok: false, message: "the transaction was rejected by network rules.\n\ntxn-mempool-conflict (code 18)" };
       }
-      accept(bin);
-      return { ok: true };
+      return { ok: true, txid: accept(bin) };
     },
     async getTransaction(txid) {
       guard("getTransaction");
@@ -95,5 +107,8 @@ export function fakePaymentChain() {
     accept,
     setBroadcast: (f: typeof onBroadcast) => (onBroadcast = f),
     setDown: (d: boolean) => (down = d),
+    /** make these calls fail (Electrum unreachable) */
+    fail: (...names: string[]) => names.forEach((n) => failing.add(n)),
+    heal: () => failing.clear(),
   };
 }

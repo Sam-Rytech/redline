@@ -20,12 +20,17 @@ export interface OutputState {
   unspent: boolean;
 }
 
-export type BroadcastResult = { ok: true } | { ok: false; message: string };
+/** ok: the node accepted it (txid = what the node answered, when it is a txid) */
+export type BroadcastResult = { ok: true; txid?: string } | { ok: false; message: string };
 
 /** Chain access for Pro pass payments. */
 export interface PaymentChain {
   /** per outpoint (same order): the output and whether it is unspent; null when the tx/output does not exist */
   getOutputs(outpoints: Outpoint[]): Promise<Array<OutputState | null>>;
+  /** per outpoint (same order): the output from its raw transaction, null when missing; no spent check */
+  getSourceOutputs(outpoints: Outpoint[]): Promise<Array<SourceOutput | null>>;
+  /** "txid:vout" of every unspent output on these locking scripts (deduped, one listunspent each) */
+  unspentOutpoints(lockingBytecodes: Uint8Array[]): Promise<Set<string>>;
   /** blockchain.transaction.broadcast; a node rejection resolves { ok: false, message } (connection failures throw) */
   broadcast(txHex: string): Promise<BroadcastResult>;
   /** raw transaction (verified to hash to txid), null when the node does not know it */
@@ -205,11 +210,26 @@ export function createElectrumChain(
         return out;
       }),
 
+    getSourceOutputs: (outpoints) =>
+      run("getSourceOutputs", async (p) => {
+        const out: Array<SourceOutput | null> = [];
+        for (const op of outpoints) out.push(await sourceOutput(p, op));
+        return out;
+      }),
+
+    unspentOutpoints: (locks) =>
+      run("unspentOutpoints", async (p) => {
+        const unique = new Map(locks.map((l) => [binToHex(l), l]));
+        const set = new Set<string>();
+        for (const l of unique.values()) for (const u of await p.getUtxosForLockingBytecode(l)) set.add(`${u.txid}:${u.vout}`);
+        return set;
+      }),
+
     broadcast: (txHex) =>
       run("broadcast", async (p): Promise<BroadcastResult> => {
         try {
-          await p.performRequest("blockchain.transaction.broadcast", txHex);
-          return { ok: true };
+          const r = await p.performRequest("blockchain.transaction.broadcast", txHex);
+          return typeof r === "string" && /^[0-9a-f]{64}$/i.test(r) ? { ok: true, txid: r.toLowerCase() } : { ok: true };
         } catch (e) {
           return { ok: false, message: e instanceof Error ? e.message : String(e) };
         }

@@ -195,9 +195,19 @@ describe("db", () => {
       expect(db.getAccount("acc")!.proUntil).toBe(1060);
       // the same txid cannot pay two invoices
       db.insertInvoice(inv("i3"));
-      expect(() => db.markInvoicePaid("i3", "ff".repeat(32), 1020, 30)).toThrow();
+      expect(db.markInvoicePaid("i3", "ff".repeat(32), 1020, 30)).toBe(false);
       expect(db.getInvoice("i3")!.status).toBe("open");
       expect(db.getAccount("acc")!.proUntil).toBe(1060);
+    });
+
+    it("markInvoiceDead: only an unpaid invoice; a dead one can still be paid", () => {
+      const db = openDb(":memory:");
+      db.upsertAccount({ id: "acc", xpubReceive: "xr", xpubChange: "xc", now: 1 });
+      db.insertInvoice(inv("i1"));
+      expect(db.markInvoiceDead("i1")).toBe(true);
+      expect(db.getInvoice("i1")!.status).toBe("dead");
+      expect(db.markInvoicePaid("i1", "ee".repeat(32), 1000, 30)).toBe(true);
+      expect(db.markInvoiceDead("i1")).toBe(false);
     });
 
     it("Pro starts from paidAt when pro_until is in the past", () => {

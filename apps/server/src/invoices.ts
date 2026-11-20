@@ -14,7 +14,7 @@ import {
   type TransactionCommon,
 } from "@bitauth/libauth";
 import { PRO_PASS_DAYS, type ApiError, type Invoice, type InvoiceQuote, type Outpoint } from "@redline/api-types";
-import { MAX_INVOICE_INPUTS, PAYMENT_FEE_HEADROOM_SATS, encodeInvoiceOpReturn, invoiceOpReturnHex, proPassSats } from "@redline/wizard-login";
+import { MAX_INVOICE_INPUTS, encodeInvoiceOpReturn, estimatePaymentFee, invoiceOpReturnHex, proPassSats } from "@redline/wizard-login";
 import { p2pkhForXpub } from "@redline/wizard-login/server";
 import type { AccountRow, Db, InvoiceRow } from "./db.js";
 import type { PaymentChain } from "./electrum.js";
@@ -25,6 +25,16 @@ export const INVOICE_SECONDS = 30 * 60;
 export const INVOICE_ADDRESS_COUNT = 20;
 /** how many recent merchant-address transactions find-payment looks at */
 export const FIND_PAYMENT_LIMIT = 50;
+/** merchant history (and its transactions) is reused this long by GET re-checks */
+export const HISTORY_CACHE_SECONDS = 20;
+/** an unpaid invoice whose inputs were spent elsewhere is given up (dead) this long after expiry */
+export const DEAD_GRACE_SECONDS = 10 * 60;
+/** sane USD/BCH range; outside it the price feed is broken and nothing is sold */
+export const MIN_PRICE_USD = 10;
+export const MAX_PRICE_USD = 100_000;
+/** after an accepted broadcast, look the tx up this many times, this far apart */
+const LOOKUP_TRIES = 3;
+const LOOKUP_WAIT_MS = 1000;
 /** before a new invoice: earlier unpaid invoices younger than this are checked for an on-chain payment */
 const PAID_CHECK_SECONDS = 24 * 3600;
 const PAID_CHECK_MAX = 3;
@@ -35,6 +45,8 @@ const OP_RETURN = 0x6a;
 
 /** an Electrum call failed (connect, timeout, transport) → 503 chain_unavailable */
 export class ChainUnavailable extends Error {}
+
+export const priceUsable = (p: number) => Number.isFinite(p) && p >= MIN_PRICE_USD && p <= MAX_PRICE_USD;
 
 export type BroadcastClass = "known" | "spent" | "other";
 
@@ -58,7 +70,10 @@ export interface InvoiceResult {
   body: Invoice | ApiError;
 }
 
-const err = (status: InvoiceResult["status"], code: string, message: string): InvoiceResult => ({ status, body: { error: { code, message } } });
+const err = (status: InvoiceResult["status"], code: string, message: string, extra: { invoiceId?: string } = {}): InvoiceResult => ({
+  status,
+  body: { error: { code, message, ...extra } },
+});
 const outKey = (o: Outpoint) => `${o.txid}:${o.vout}`;
 const sameSet = (a: Outpoint[], b: Outpoint[]) => {
   if (a.length !== b.length) return false;
@@ -85,14 +100,19 @@ export interface InvoiceDeps {
   merchantAddress: string;
   /** unix seconds */
   now: () => number;
+  /** default setTimeout; injectable for tests */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** what a re-check learned about an unpaid invoice */
+type Recheck = "paid" | "unspent" | "spent" | "unknown";
 
 export function createInvoices(deps: InvoiceDeps) {
   const { db, chain, now } = deps;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const decoded = cashAddressToLockingBytecode(deps.merchantAddress);
   if (typeof decoded === "string") throw new Error(`Invalid merchant address: ${decoded}`);
-  const merchantLock = decoded.bytecode;
-  const merchantLockHex = binToHex(merchantLock);
+  const merchantLockHex = binToHex(decoded.bytecode);
 
   const onChain = async <T>(p: () => Promise<T>): Promise<T> => {
     try {
@@ -107,8 +127,8 @@ export function createInvoices(deps: InvoiceDeps) {
     const r = lockingBytecodeToCashAddress({ bytecode: hexToBin(lockHex), prefix: "bitcoincash", tokenSupport: true });
     return typeof r === "string" ? lockHex : r.address;
   };
-  const statusOf = (r: InvoiceRow) => (r.status === "open" && r.expiresAt <= now() ? "expired" : r.status);
-  const toApi = (r: InvoiceRow): Invoice => ({
+  const statusOf = (r: InvoiceRow) => (r.status === "dead" || (r.status === "open" && r.expiresAt <= now()) ? "expired" : r.status);
+  const toApi = (r: InvoiceRow, inputsSpent = false): Invoice => ({
     id: r.id,
     status: statusOf(r),
     asset: "BCH",
@@ -119,6 +139,7 @@ export function createInvoices(deps: InvoiceDeps) {
     txid: r.txid,
     createdAt: new Date(r.createdAt * 1000).toISOString(),
     paidAt: r.paidAt !== null ? new Date(r.paidAt * 1000).toISOString() : null,
+    ...((inputsSpent || r.status === "dead") && r.status !== "paid" && { inputsSpent: true }),
   });
   const fresh = (id: string): InvoiceRow => {
     const r = db.getInvoice(id);
@@ -126,36 +147,70 @@ export function createInvoices(deps: InvoiceDeps) {
     return r;
   };
 
-  /** does `tx` pay invoice `r`: spends one of its inputs, carries its OP_RETURN, pays ≥ amount to its merchant */
+  /** does `tx` pay invoice `r`: spends one of its inputs, has exactly one OP_RETURN (its own), pays ≥ amount to its merchant */
   const pays = (tx: TransactionCommon, r: InvoiceRow): boolean => {
     const mine = new Set(r.inputs.map(outKey));
     const lock = hexToBin(r.merchantLockingHex);
-    const opReturn = encodeInvoiceOpReturn(r.id);
+    const opReturns = tx.outputs.filter((o) => o.lockingBytecode[0] === OP_RETURN);
     return (
       tx.inputs.some((i) => mine.has(outKey({ txid: binToHex(i.outpointTransactionHash), vout: i.outpointIndex }))) &&
-      tx.outputs.some((o) => binsAreEqual(o.lockingBytecode, opReturn)) &&
+      opReturns.length === 1 &&
+      binsAreEqual(opReturns[0]!.lockingBytecode, encodeInvoiceOpReturn(r.id)) &&
       tx.outputs.some((o) => binsAreEqual(o.lockingBytecode, lock) && o.valueSatoshis >= BigInt(r.amountSats))
     );
   };
 
-  /** the txid of a transaction on the network that pays `r` (merchant-address history), or null */
-  const findPayment = async (r: InvoiceRow): Promise<string | null> => {
-    const txs = await onChain(() => chain.recentTransactions(hexToBin(r.merchantLockingHex), FIND_PAYMENT_LIMIT));
-    for (const bin of txs) {
+  // merchant history, shared by all requests for HISTORY_CACHE_SECONDS (in-flight scans are shared too)
+  const history = new Map<string, { at: number; txs: Promise<Uint8Array[]> }>();
+  const recent = (lockHex: string, fresh: boolean): Promise<Uint8Array[]> => {
+    const t = now();
+    const hit = history.get(lockHex);
+    if (!fresh && hit && t - hit.at < HISTORY_CACHE_SECONDS) return hit.txs;
+    const txs = onChain(() => chain.recentTransactions(hexToBin(lockHex), FIND_PAYMENT_LIMIT));
+    history.set(lockHex, { at: t, txs });
+    txs.catch(() => {
+      if (history.get(lockHex)?.txs === txs) history.delete(lockHex);
+    });
+    return txs;
+  };
+
+  /**
+   * The txid of a transaction on the network that pays `r` (merchant-address history), or null.
+   * `fresh` skips the cache: submit and the pre-purchase check must not miss a payment made seconds ago.
+   */
+  const findPayment = async (r: InvoiceRow, fresh: boolean): Promise<string | null> => {
+    for (const bin of await recent(r.merchantLockingHex, fresh)) {
       const tx = decodeTransaction(bin);
       if (typeof tx !== "string" && pays(tx, r)) return hashTransaction(bin);
     }
     return null;
   };
 
-  /** if any of an unpaid invoice's inputs is spent, look for its payment; true when it is now paid */
-  const reconcile = async (r: InvoiceRow): Promise<boolean> => {
-    const outs = await onChain(() => chain.getOutputs(r.inputs));
-    if (!outs.some((o) => o !== null && !o.unspent)) return false;
-    const txid = await findPayment(r);
-    if (!txid) return false;
+  /** true only if `txid` is now recorded as this invoice's payment */
+  const markPaid = (r: InvoiceRow, txid: string): boolean => {
     db.markInvoicePaid(r.id, txid, now(), PRO_SECONDS);
-    return true;
+    const after = fresh(r.id);
+    return after.status === "paid" && after.txid === txid;
+  };
+
+  /**
+   * Re-check an unpaid invoice: if any input is spent, look for its payment. Marks it paid when found,
+   * dead when hopeless (spent elsewhere, past expiry + grace). Chain failures throw ChainUnavailable.
+   */
+  const recheck = async (r: InvoiceRow, freshHistory: boolean, tolerateScanFailure = false): Promise<Recheck> => {
+    const outs = await onChain(() => chain.getOutputs(r.inputs));
+    if (!outs.some((o) => o !== null && !o.unspent)) return "unspent";
+    let txid: string | null;
+    try {
+      txid = await findPayment(r, freshHistory);
+    } catch (e) {
+      if (!(e instanceof ChainUnavailable) || !tolerateScanFailure) throw e;
+      console.error(`payment scan failed: ${e.message}`);
+      return "spent"; // its coins are gone either way: it cannot be paid again
+    }
+    if (txid && markPaid(r, txid)) return "paid";
+    if (now() > r.expiresAt + DEAD_GRACE_SECONDS) db.markInvoiceDead(r.id);
+    return "spent";
   };
 
   const ownLocks = (a: AccountRow): Set<string> => {
@@ -167,6 +222,15 @@ export function createInvoices(deps: InvoiceDeps) {
       }
     }
     return s;
+  };
+
+  /** the tx is on the network: looked up LOOKUP_TRIES times, 1 s apart */
+  const lookup = async (txid: string): Promise<boolean> => {
+    for (let i = 0; i < LOOKUP_TRIES; i++) {
+      if (i > 0) await sleep(LOOKUP_WAIT_MS);
+      if ((await onChain(() => chain.getTransaction(txid))) !== null) return true;
+    }
+    return false;
   };
 
   return {
@@ -188,42 +252,59 @@ export function createInvoices(deps: InvoiceDeps) {
       const amountSats = proPassSats(priceUsd);
 
       const t = now();
-      const openSame = () => db.listInvoices(a.id).find((r) => r.status === "open" && r.expiresAt > t && sameSet(r.inputs, inputs));
+      const isOpen = (r: InvoiceRow) => r.status === "open" && r.expiresAt > t;
+      const openSame = () => db.listInvoices(a.id).find((r) => isOpen(r) && sameSet(r.inputs, inputs));
       const existing = openSame();
       if (existing) return { status: 200, body: toApi(existing) };
 
-      // never sell a second pass by accident: an earlier invoice may have been paid by a broadcast whose
-      // submit never arrived (lost tab, lost storage). Its inputs being spent tells us to look.
+      // Earlier unpaid invoices: one may have been paid by a broadcast whose submit never arrived
+      // (lost tab or storage) → already_paid. An open one whose coins are all unspent can still be
+      // paid → 409 invoice_open (reuse it) rather than risk two live invoices.
       const earlier = db
         .listInvoices(a.id)
-        .filter((r) => r.status !== "paid" && r.createdAt > t - PAID_CHECK_SECONDS)
+        .filter((r) => (r.status === "open" || r.status === "expired") && r.createdAt > t - PAID_CHECK_SECONDS)
         .slice(0, PAID_CHECK_MAX);
       for (const r of earlier) {
-        if (await reconcile(r)) {
+        let state: Recheck;
+        try {
+          state = await recheck(r, true, true);
+        } catch (e) {
+          if (!(e instanceof ChainUnavailable)) throw e;
+          console.error(`earlier invoice check failed: ${e.message}`);
+          state = "unknown"; // carry on; an open one is still treated as open below
+        }
+        if (state === "paid") {
           const paid = fresh(r.id);
-          return err(409, "already_paid", `Already paid ✓ invoice ${paid.id}, txid ${paid.txid}. Your Pro pass is active.`);
+          return err(409, "already_paid", `Already paid ✓ invoice ${paid.id}, txid ${paid.txid}. Your Pro pass is active.`, { invoiceId: paid.id });
+        }
+        if ((state === "unspent" || state === "unknown") && isOpen(r)) {
+          return err(409, "invoice_open", `Invoice ${r.id} is still open with other coins; pay that one (or wait until it expires).`, { invoiceId: r.id });
         }
       }
 
-      const outs = await onChain(() => chain.getOutputs(inputs));
+      // 1. raw outputs: existence, ownership, tokens — before any listunspent
+      const outs = await onChain(() => chain.getSourceOutputs(inputs));
       const mine = ownLocks(a);
       let total = 0n;
       for (const [i, o] of outs.entries()) {
-        const op = `${inputs[i]!.txid}:${inputs[i]!.vout}`;
+        const op = outKey(inputs[i]!);
         if (!o) return err(400, "input_not_found", `Coin ${op} does not exist`);
-        if (!mine.has(binToHex(o.output.lockingBytecode))) {
+        if (!mine.has(binToHex(o.lockingBytecode))) {
           return err(400, "foreign_input", `Coin ${op} is not on one of this wallet's first ${INVOICE_ADDRESS_COUNT} receive/change addresses`);
         }
-        if (o.output.token) return err(400, "token_input", `Coin ${op} carries CashTokens; pay with plain BCH coins`);
-        if (!o.unspent) return err(400, "input_spent", `Coin ${op} is already spent`);
-        total += o.output.valueSatoshis;
+        if (o.token) return err(400, "token_input", `Coin ${op} carries CashTokens; pay with plain BCH coins`);
+        total += o.valueSatoshis;
       }
-      const need = BigInt(amountSats + PAYMENT_FEE_HEADROOM_SATS);
+      // 2. spent? only the (owned) scripts involved, each once
+      const unspent = await onChain(() => chain.unspentOutpoints(outs.map((o) => o!.lockingBytecode)));
+      for (const op of inputs) if (!unspent.has(outKey(op))) return err(400, "input_spent", `Coin ${outKey(op)} is already spent`);
+      const need = BigInt(amountSats + estimatePaymentFee(inputs.length));
       if (total < need) return err(400, "insufficient_inputs", `Coins hold ${total} sats; need at least ${need} (price + fee)`);
 
       // synchronous from here: no other request can interleave
       const raced = openSame();
       if (raced) return { status: 200, body: toApi(raced) };
+      // any open invoice left is expired or has spent coins (else we returned invoice_open above)
       for (const r of db.listInvoices(a.id)) if (r.status === "open") db.expireInvoice(r.id);
       const id = randomBytes(16).toString("hex");
       db.insertInvoice({ id, accountId: a.id, asset: "BCH", amountSats, merchantLockingHex: merchantLockHex, inputs, createdAt: t, expiresAt: t + INVOICE_SECONDS });
@@ -233,24 +314,25 @@ export function createInvoices(deps: InvoiceDeps) {
     async get(a: AccountRow, id: string): Promise<InvoiceResult> {
       const r = db.getInvoice(id);
       if (!r || r.accountId !== a.id) return err(404, "not_found", "No such invoice");
-      if (r.status !== "paid") {
+      let spent = false;
+      if (r.status === "open" || r.status === "expired") {
         try {
-          await reconcile(r);
+          spent = (await recheck(r, false)) === "spent";
         } catch (e) {
           // best effort: answer with what we know
           if (!(e instanceof ChainUnavailable)) throw e;
           console.error(`invoice re-check failed: ${e.message}`);
         }
       }
-      return { status: 200, body: toApi(fresh(id)) };
+      return { status: 200, body: toApi(fresh(id), spent) };
     },
 
     async submit(a: AccountRow, id: string, body: Record<string, unknown> | null): Promise<InvoiceResult> {
       const r = db.getInvoice(id);
       if (!r || r.accountId !== a.id) return err(404, "not_found", "No such invoice");
       if (r.status === "paid") return { status: 200, body: toApi(r) };
-      // an expired invoice is still accepted: the price was fixed and the coins are pinned, so a late
-      // payment is one payment, never a second one
+      // an expired (or dead) invoice is still accepted: the price was fixed and the coins are pinned,
+      // so a late payment is one payment, never a second one
 
       const hex = typeof body?.signedTxHex === "string" ? body.signedTxHex.trim().toLowerCase() : "";
       if (!/^(?:[0-9a-f]{2})+$/.test(hex) || hex.length > MAX_TX_HEX) return err(400, "bad_request", "Expected { signedTxHex }");
@@ -271,7 +353,7 @@ export function createInvoices(deps: InvoiceDeps) {
       if (tx.outputs.some((o) => o.token)) return err(400, "token_output", "The payment must not create token outputs");
 
       const txid = hashTransaction(bin);
-      const known = () => onChain(() => chain.getTransaction(txid)).then((t) => t !== null);
+      const spentElsewhere = () => err(409, "inputs_spent", "This invoice's coins were spent by another transaction that does not pay it");
       let paidTxid: string | null = null;
       let res;
       try {
@@ -279,22 +361,25 @@ export function createInvoices(deps: InvoiceDeps) {
       } catch (e) {
         // transport failure: the transaction may or may not have reached the node
         console.error(`broadcast failed: ${e instanceof Error ? e.message : String(e)}`);
-        if (await known()) paidTxid = txid;
+        if (await onChain(() => chain.getTransaction(txid))) paidTxid = txid;
         else throw new ChainUnavailable("broadcast did not complete");
       }
       if (res) {
         const kind = res.ok ? "known" : classifyBroadcastError(res.message);
         if (kind === "spent") {
-          paidTxid = await findPayment(r);
-          if (!paidTxid) return err(409, "inputs_spent", "This invoice's coins were spent by another transaction that does not pay it");
-        } else if (await known()) {
+          paidTxid = await findPayment(r, true);
+          if (!paidTxid) return spentElsewhere();
+        } else if (await lookup(txid)) {
+          paidTxid = txid;
+        } else if (res.ok && res.txid === txid) {
+          // the node accepted exactly this fully validated tx; hosts just have not indexed it yet
           paidTxid = txid;
         } else {
           const msg = res.ok ? "the node accepted the transaction but does not return it" : nodeMessage(res.message);
           return err(502, "broadcast_failed", `The network refused the payment: ${msg}`);
         }
       }
-      db.markInvoicePaid(r.id, paidTxid!, now(), PRO_SECONDS);
+      if (!markPaid(r, paidTxid!) && fresh(r.id).status !== "paid") return spentElsewhere();
       return { status: 200, body: toApi(fresh(r.id)) };
     },
   };

@@ -11,7 +11,8 @@ export type ISODate = string; // e.g. "2026-11-20T12:00:00.000Z"
 export type Hex = string;
 
 export interface ApiError {
-  error: { code: string; message: string };
+  /** invoiceId: on 409 invoice_open, the open invoice to reuse */
+  error: { code: string; message: string; invoiceId?: string };
 }
 
 export interface Outpoint {
@@ -181,6 +182,11 @@ export interface Invoice {
   txid: Hex | null;
   createdAt: ISODate;
   paidAt: ISODate | null;
+  /**
+   * Set by GET /api/invoices/:id on an unpaid invoice: true when one of its inputs is spent by a
+   * transaction that does not pay it (the invoice can never be paid; start a new one).
+   */
+  inputsSpent?: boolean;
 }
 
 export const PRO_PASS_USD = 0.25;

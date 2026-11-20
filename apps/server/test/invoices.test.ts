@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { binToHex, cashAddressToLockingBytecode, encodeTransaction, hashTransaction, hexToBin, sha256, utf8ToBin, type TransactionCommon } from "@bitauth/libauth";
 import { describe, expect, it } from "vitest";
 import type { ApiError, Invoice, InvoiceQuote, MeResponse, Outpoint } from "@redline/api-types";
-import { encodeInvoiceOpReturn, invoiceOpReturnHex } from "@redline/wizard-login";
+import { encodeInvoiceOpReturn, estimatePaymentFee, invoiceOpReturnHex } from "@redline/wizard-login";
 import { makeWallet, signP2pkhInputs } from "@redline/wizard-login/testing";
 import { createApp, SESSION_COOKIE } from "../src/app.js";
 import { openDb } from "../src/db.js";
@@ -35,6 +35,7 @@ function setup(o: { merchant?: string | null; state?: LoanState | null; proUntil
   const fake = fakePaymentChain();
   let current = o.state === undefined ? state() : o.state;
   let now = NOW;
+  const sleeps: number[] = [];
   const reader: ChainReader = { current: () => current, lastError: () => null, refresh: async () => {}, start() {}, stop() {}, onUpdate() {} };
   const merchant = o.merchant === undefined ? MERCHANT : o.merchant;
   const app = createApp({
@@ -43,7 +44,7 @@ function setup(o: { merchant?: string | null; state?: LoanState | null; proUntil
     chain: { getSourceOutput: async () => null, isUnspentOrSpentBy: async () => false, getUtxos: async () => [] },
     config: { loginDomain: "redline.test", secureCookies: false, trustProxyHops: 0, logXff: false, publicOrigin: undefined },
     now: () => now,
-    ...(merchant && { payments: { merchantAddress: merchant, chain: fake.chain } }),
+    ...(merchant && { payments: { merchantAddress: merchant, chain: fake.chain, sleep: async (ms: number) => void sleeps.push(ms) } }),
   });
 
   // coins: who owns them and at which path (for signing)
@@ -107,7 +108,7 @@ function setup(o: { merchant?: string | null; state?: LoanState | null; proUntil
     return { hex: binToHex(bin), bin, txid: hashTransaction(bin) };
   };
 
-  return { app, db, fake, C, user, payTx, setState: (s: LoanState | null) => (current = s), setNow: (d: Date) => (now = d) };
+  return { app, db, fake, C, user, payTx, sleeps, setState: (s: LoanState | null) => (current = s), setNow: (d: Date) => (now = d) };
 }
 
 const create = (call: Awaited<ReturnType<ReturnType<typeof setup>["user"]>>, inputs: Outpoint[]) => call("/api/invoices", { asset: "BCH", inputs });
@@ -191,13 +192,15 @@ describe("invoice routes", () => {
       const r = await call("/api/invoices", body);
       expect([r.status, r.code()], JSON.stringify(body)).toEqual([status, code]);
     }
-    // exactly amount + 500 is enough
-    s.fake.addCoin({ txid: txid(5), vout: 0 }, wallet.lockingBytecode("receive", 7), BigInt(AMOUNT + 500));
-    expect((await create(call, [{ txid: txid(5), vout: 0 }])).status).toBe(201);
+    // the bar is amount + the shared fee estimate for that many inputs (300 for one)
+    s.fake.addCoin({ txid: txid(5), vout: 0 }, wallet.lockingBytecode("receive", 7), BigInt(AMOUNT + estimatePaymentFee(1) - 1));
+    expect((await create(call, [{ txid: txid(5), vout: 0 }])).code()).toBe("insufficient_inputs");
+    s.fake.addCoin({ txid: txid(5), vout: 1 }, wallet.lockingBytecode("receive", 7), BigInt(AMOUNT + estimatePaymentFee(1)));
+    expect((await create(call, [{ txid: txid(5), vout: 1 }])).status).toBe(201);
     expect(s.db.listInvoices("acc")).toHaveLength(1);
   });
 
-  it("one open invoice per account: same inputs → the same invoice; different inputs → old one expired", async () => {
+  it("one open invoice per account: same inputs → the same invoice; different inputs → 409 invoice_open while its coins are unspent", async () => {
     const s = setup();
     const call = s.user("acc");
     const a = (await create(call, [s.C.r3, s.C.c1])).json<Invoice>();
@@ -205,12 +208,107 @@ describe("invoice routes", () => {
     expect(again.status).toBe(200);
     expect(again.json<Invoice>().id).toBe(a.id);
     const b = await create(call, [s.C.big]);
-    expect(b.status).toBe(201);
-    expect(b.json<Invoice>().id).not.toBe(a.id);
-    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().status).toBe("expired");
-    // 30 minutes later the open one is expired too
+    expect([b.status, b.code()]).toEqual([409, "invoice_open"]);
+    expect(b.json<ApiError>().error.invoiceId).toBe(a.id);
+    expect(b.json<ApiError>().error.message).toContain(a.id);
+    // 30 minutes later it has expired: a new invoice with other coins is fine
     s.setNow(new Date(NOW.getTime() + 30 * 60_000));
-    expect((await call(`/api/invoices/${b.json<Invoice>().id}`)).json<Invoice>().status).toBe("expired");
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().status).toBe("expired");
+    expect((await create(call, [s.C.big])).status).toBe(201);
+  });
+
+  it("an open invoice whose coin was spent elsewhere is replaced; GET reports inputsSpent", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const a = (await create(call, [s.C.r3, s.C.c1])).json<Invoice>();
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().inputsSpent).toBeUndefined();
+    s.fake.accept(s.payTx(a, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin); // spent elsewhere
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "open", inputsSpent: true });
+    const b = await create(call, [s.C.big]);
+    expect(b.status).toBe(201);
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>().status).toBe("expired");
+  });
+
+  it("create fetches raw outputs first: a foreign or token coin never triggers listunspent; owned scripts once each", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    expect((await create(call, [s.C.r3, s.C.stranger])).code()).toBe("foreign_input");
+    expect((await create(call, [s.C.r2token])).code()).toBe("token_input");
+    expect(s.fake.calls.filter((c) => c === "unspentOutpoints" || c === "getOutputs")).toEqual([]);
+    s.fake.calls.length = 0;
+    expect((await create(call, [s.C.r3, s.C.c1])).status).toBe(201);
+    expect(s.fake.calls).toEqual(["getSourceOutputs", "unspentOutpoints"]);
+  });
+
+  it("price outside 10..100000 → 503 not_ready for quote and create", async () => {
+    for (const price of [5, 200_000]) {
+      const s = setup({ state: state(price) });
+      const call = s.user("acc");
+      expect((await call("/api/invoices/quote")).code()).toBe("not_ready");
+      expect((await create(call, [s.C.big])).code()).toBe("not_ready");
+    }
+  });
+
+  it("find-payment history is cached 20 s across requests; a hopeless invoice goes dead and is never rescanned", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    s.fake.accept(s.payTx(a, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin);
+    const scans = () => s.fake.calls.filter((c) => c === "recentTransactions").length;
+    await call(`/api/invoices/${a.id}`);
+    await call(`/api/invoices/${a.id}`);
+    expect(scans()).toBe(1);
+    s.setNow(new Date(NOW.getTime() + 21_000));
+    await call(`/api/invoices/${a.id}`);
+    expect(scans()).toBe(2);
+    // past expiry + 10 min grace with nothing found → dead
+    s.setNow(new Date(NOW.getTime() + 41 * 60_000));
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "expired", inputsSpent: true });
+    expect(s.db.getInvoice(a.id)!.status).toBe("dead");
+    s.fake.calls.length = 0;
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "expired", inputsSpent: true });
+    expect(s.fake.calls).toEqual([]);
+    // and create's earlier-invoice check skips it too
+    expect((await create(call, [s.C.r3, s.C.c1])).status).toBe(201);
+    expect(s.fake.calls.filter((c) => c === "recentTransactions" || c === "getOutputs")).toEqual([]);
+  });
+
+  it("create does not fail when checking an earlier invoice hits an Electrum outage", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    s.fake.accept(s.payTx(a, { opReturns: [], lock: wallet.lockingBytecode("receive", 1) }).bin);
+    s.fake.fail("recentTransactions");
+    expect((await create(call, [s.C.r3, s.C.c1])).status).toBe(201);
+  });
+
+  it("find-payment needs exactly one OP_RETURN (the invoice's)", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    s.fake.accept(s.payTx(a, { opReturns: [encodeInvoiceOpReturn(a.id), encodeInvoiceOpReturn(a.id)] }).bin);
+    expect((await call(`/api/invoices/${a.id}`)).json<Invoice>()).toMatchObject({ status: "open", inputsSpent: true });
+  });
+
+  it("broadcast accepted but the lookup misses: retried 3× with 1 s waits; paid if the node answered our txid", async () => {
+    const s = setup();
+    const call = s.user("acc");
+    const a = (await create(call, [s.C.big])).json<Invoice>();
+    const tx = s.payTx(a);
+    s.fake.setBroadcast(() => ({ ok: true, txid: tx.txid })); // accepted, but no host returns it yet
+    s.fake.calls.length = 0;
+    const r = await call(`/api/invoices/${a.id}/submit`, { signedTxHex: tx.hex });
+    expect(r.json<Invoice>()).toMatchObject({ status: "paid", txid: tx.txid });
+    expect(s.fake.calls.filter((c) => c === "getTransaction")).toHaveLength(3);
+    expect(s.sleeps).toEqual([1000, 1000]);
+    // no txid in the answer and still not found → 502, not paid
+    const s2 = setup();
+    const call2 = s2.user("acc");
+    const b = (await create(call2, [s2.C.big])).json<Invoice>();
+    s2.fake.setBroadcast(() => ({ ok: true }));
+    const r2 = await call2(`/api/invoices/${b.id}/submit`, { signedTxHex: s2.payTx(b).hex });
+    expect([r2.status, r2.code()]).toEqual([502, "broadcast_failed"]);
+    expect(s2.db.getAccount("acc")!.proUntil).toBeNull();
   });
 
   it("submit: broadcasts, marks paid, Pro for 30 days, unlimited watches", async () => {

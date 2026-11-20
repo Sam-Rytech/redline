@@ -28,7 +28,7 @@ import {
 import type { ServerConfig } from "./config.js";
 import type { AccountRow, Db, WatchRow } from "./db.js";
 import { addressFor, type Chain, type PaymentChain } from "./electrum.js";
-import { ChainUnavailable, createInvoices, type InvoiceResult } from "./invoices.js";
+import { ChainUnavailable, createInvoices, priceUsable, type InvoiceResult } from "./invoices.js";
 import type { ChainReader } from "./reader.js";
 import { tokenHash } from "./tokens.js";
 
@@ -88,7 +88,7 @@ export interface AppDeps {
   /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
   botUsername?: () => string | undefined;
   /** Pro pass payments (MERCHANT_ADDRESS set); without it the invoice routes answer 503 payments_unavailable */
-  payments?: { merchantAddress: string; chain: PaymentChain };
+  payments?: { merchantAddress: string; chain: PaymentChain; sleep?: (ms: number) => Promise<void> };
 }
 
 export function createApp(deps: AppDeps) {
@@ -444,7 +444,13 @@ export function createApp(deps: AppDeps) {
 
   // ---------- invoices (30-day Pro pass) ----------
   const invoices = deps.payments
-    ? createInvoices({ db, chain: deps.payments.chain, merchantAddress: deps.payments.merchantAddress, now: nowSec })
+    ? createInvoices({
+        db,
+        chain: deps.payments.chain,
+        merchantAddress: deps.payments.merchantAddress,
+        now: nowSec,
+        ...(deps.payments.sleep && { sleep: deps.payments.sleep }),
+      })
     : null;
   const noPayments = (c: Context) => c.json(err("payments_unavailable", "Payments are not configured on this server"), 503);
   const invoiceReply = async (c: Context, run: () => Promise<InvoiceResult>) => {
@@ -462,7 +468,8 @@ export function createApp(deps: AppDeps) {
     if (!a) return unauthorized(c);
     if (!invoices) return noPayments(c);
     const s = reader.current();
-    if (!s) return notReady(c);
+    // a price outside 10..100000 USD/BCH means a broken feed: sell nothing
+    if (!s || !priceUsable(s.priceUsd)) return notReady(c);
     return c.json(invoices.quote(s.priceUsd));
   });
 
@@ -471,7 +478,7 @@ export function createApp(deps: AppDeps) {
     if (!a) return unauthorized(c);
     if (!invoices) return noPayments(c);
     const s = reader.current();
-    if (!s) return notReady(c);
+    if (!s || !priceUsable(s.priceUsd)) return notReady(c);
     const body = await readJson(c);
     return invoiceReply(c, () => invoices.create(a, body, s.priceUsd));
   });

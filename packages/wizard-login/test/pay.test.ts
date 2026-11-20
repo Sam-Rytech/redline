@@ -321,8 +321,7 @@ describe("payProPass against the real server app", () => {
     const s = setup();
     s.coin(1, ["receive", 2], 100_000);
     // the chain says the coin is spent by the time the invoice is created
-    const orig = s.fake.chain.getOutputs;
-    s.fake.chain.getOutputs = async (ops) => (await orig(ops)).map((o) => o && { ...o, unspent: false });
+    s.fake.chain.unspentOutpoints = async () => new Set<string>();
     const e = await payError(payProPass({ manager: fakeManager(wallet, s.fake).manager, fetch: s.fetch, storage: memoryStorage() }));
     expect(e.code).toBe("server_rejected");
     expect(e.serverCode).toBe("input_spent");

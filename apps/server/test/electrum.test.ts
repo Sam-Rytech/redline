@@ -181,10 +181,24 @@ describe("electrum chain", () => {
       expect(f.log.connects).toBe(1);
     });
 
+    it("getSourceOutputs + unspentOutpoints: raw outputs first, listunspent only for the scripts asked, deduped", async () => {
+      const asked: Uint8Array[] = [];
+      const f = fake({ unspent: [{ txid: FUND, vout: 1 }] });
+      const chain = createElectrumChain({
+        provider: () => ({ ...f.provider(), getUtxosForLockingBytecode: async (l: Uint8Array) => (asked.push(l), [{ txid: FUND, vout: 1 }]) }),
+      });
+      const outs = await chain.getSourceOutputs([{ txid: FUND, vout: 0 }, { txid: "ab".repeat(32), vout: 0 }]);
+      expect(outs.map((o) => o?.valueSatoshis ?? null)).toEqual([1234n, null]);
+      expect(asked).toHaveLength(0);
+      const set = await chain.unspentOutpoints([LOCK, Uint8Array.from(LOCK)]);
+      expect([...set]).toEqual([`${FUND}:1`]);
+      expect(asked).toHaveLength(1);
+    });
+
     it("broadcast: ok, or the node's rejection message (not thrown)", async () => {
       const sent: unknown[] = [];
       const ok = createElectrumChain({ provider: fake({ perform: (name, hex) => (sent.push([name, hex]), "ab".repeat(32)) }).provider });
-      expect(await ok.broadcast("0011")).toEqual({ ok: true });
+      expect(await ok.broadcast("0011")).toEqual({ ok: true, txid: "ab".repeat(32) });
       expect(sent).toEqual([["blockchain.transaction.broadcast", "0011"]]);
       const bad = createElectrumChain({
         provider: fake({

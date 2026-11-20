@@ -34,6 +34,8 @@ export interface TelegramChatRow {
   mutedUntil: number | null;
 }
 
+export type StoredInvoiceStatus = InvoiceStatus | "dead";
+
 export interface InvoiceRow {
   /** 16 random bytes, hex */
   id: string;
@@ -45,8 +47,11 @@ export interface InvoiceRow {
   /** the inputs the paying transaction must spend, exactly */
   inputs: Outpoint[];
   txid: string | null;
-  /** as stored: an "open" row past expiresAt is expired in the API */
-  status: InvoiceStatus;
+  /**
+   * as stored: an "open" row past expiresAt is expired in the API; "dead" (inputs spent elsewhere,
+   * no payment found, past expiry + grace) is "expired" in the API and never rescanned
+   */
+  status: StoredInvoiceStatus;
   createdAt: number;
   expiresAt: number;
   paidAt: number | null;
@@ -94,10 +99,12 @@ export interface Db {
   listInvoices(accountId: string): InvoiceRow[];
   /** open → expired; false when it was not open */
   expireInvoice(id: string): boolean;
+  /** open/expired → dead; false otherwise */
+  markInvoiceDead(id: string): boolean;
   /**
    * Atomic: mark a not-yet-paid invoice paid and extend its account's Pro to
    * max(paidAt, pro_until) + proSeconds. False (and nothing changes) when it was already paid.
-   * Throws when `txid` already paid another invoice.
+   * Also false when `txid` already paid another invoice (then it is not this invoice's payment).
    */
   markInvoicePaid(id: string, txid: string, paidAt: number, proSeconds: number): boolean;
 
@@ -152,7 +159,7 @@ const toWatch = (r: Row): WatchRow => ({
   createdAt: num(r.created_at),
 });
 
-const STATUSES: ReadonlySet<string> = new Set(["open", "paid", "expired"]);
+const STATUSES: ReadonlySet<string> = new Set(["open", "paid", "expired", "dead"]);
 
 const toInvoice = (r: Row): InvoiceRow => {
   const inputs = JSON.parse(str(r.inputs_json)) as Outpoint[];
@@ -164,7 +171,7 @@ const toInvoice = (r: Row): InvoiceRow => {
     merchantLockingHex: str(r.merchant_locking_hex),
     inputs: inputs.map((o) => ({ txid: String(o.txid), vout: Number(o.vout) })),
     txid: r.txid === null || r.txid === undefined ? null : str(r.txid),
-    status: STATUSES.has(str(r.status)) ? (str(r.status) as InvoiceStatus) : "expired",
+    status: STATUSES.has(str(r.status)) ? (str(r.status) as StoredInvoiceStatus) : "expired",
     createdAt: num(r.created_at),
     expiresAt: num(r.expires_at),
     paidAt: numOrNull(r.paid_at),
@@ -231,6 +238,8 @@ export function openDb(path: string): Db {
     getInvoice: db.prepare(`SELECT * FROM invoices WHERE id = ?`),
     listInvoices: db.prepare(`SELECT * FROM invoices WHERE account_id = ? ORDER BY created_at DESC, rowid DESC`),
     expireInvoice: db.prepare(`UPDATE invoices SET status = 'expired' WHERE id = ? AND status = 'open'`),
+    deadInvoice: db.prepare(`UPDATE invoices SET status = 'dead' WHERE id = ? AND status IN ('open', 'expired')`),
+    txidUsed: db.prepare(`SELECT 1 FROM invoices WHERE txid = ?`),
     payInvoice: db.prepare(
       `UPDATE invoices SET status = 'paid', txid = ?, paid_at = ? WHERE id = ? AND status <> 'paid' RETURNING account_id`,
     ),
@@ -374,7 +383,12 @@ export function openDb(path: string): Db {
     expireInvoice(id) {
       return Number(q.expireInvoice.run(id).changes) === 1;
     },
+    markInvoiceDead(id) {
+      return Number(q.deadInvoice.run(id).changes) === 1;
+    },
     markInvoicePaid(id, txid, paidAt, proSeconds) {
+      // a txid pays at most one invoice (also enforced by UNIQUE)
+      if (q.txidUsed.get(txid)) return false;
       db.exec("BEGIN IMMEDIATE");
       try {
         const r = q.payInvoice.get(txid, paidAt, id) as Row | undefined;
