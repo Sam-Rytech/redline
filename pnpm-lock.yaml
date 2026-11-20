@@ -65,7 +65,17 @@ importers:
         specifier: 0.14.0
         version: 0.14.0
 
+  packages/wizard-login:
+    dependencies:
+      '@bitauth/libauth':
+        specifier: 3.0.0
+        version: 3.0.0
+
 packages:
+
+  '@bitauth/libauth@3.0.0':
+    resolution: {integrity: sha512-3yoL31XpnhAnf5nDVMFk4xPqebxDwXrgYAwpa31ARJnV5A/eXWlpNYvCd6FTZPFM4VvKfjCBi+jRCrw1hOZ0Jg==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   '@bitauth/libauth@3.1.0-next.8':
     resolution: {integrity: sha512-Pm+Ju+YP3JeBLLTiVrBnia2wwE4G17r4XqpvPRMcklElJTe8J6x3JgKRg1by0Xm3ZY6UFxACkEAoSA+x419/zA==}
@@ -857,6 +867,8 @@ packages:
         optional: true
 
 snapshots:
+
+  '@bitauth/libauth@3.0.0': {}
 
   '@bitauth/libauth@3.1.0-next.8': {}
 
