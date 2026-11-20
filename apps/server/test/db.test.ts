@@ -73,4 +73,89 @@ describe("db", () => {
     db.insertChallenge({ ...ch("n1", 100), path: ["change", 0] as unknown as ["receive", number] });
     expect(db.getChallenge("n1")).toBeNull();
   });
+
+  describe("watches", () => {
+    const w = (id: string, accountId: string, loanId: string) => ({
+      id, accountId, loanId, rules: { liquidation: true, loanGone: false }, createdAt: 10,
+    });
+
+    it("insert, list, count, get; duplicate (account, loan) refused", () => {
+      const db = openDb(":memory:");
+      expect(db.insertWatch(w("w1", "acc", "loan1"))).toBe(true);
+      expect(db.insertWatch(w("w2", "acc", "loan1"))).toBe(false);
+      expect(db.insertWatch(w("w3", "other", "loan1"))).toBe(true);
+      expect(db.countWatches("acc")).toBe(1);
+      expect(db.listWatches("acc")).toEqual([
+        { id: "w1", accountId: "acc", loanId: "loan1", rules: { liquidation: true, loanGone: false }, lastBand: null, mutedUntil: null, createdAt: 10 },
+      ]);
+      expect(db.getWatch("w3")!.accountId).toBe("other");
+      expect(db.getWatch("nope")).toBeNull();
+      expect(db.allWatches().map((x) => x.id).sort()).toEqual(["w1", "w3"]);
+    });
+
+    it("update rules and delete only for the owner", () => {
+      const db = openDb(":memory:");
+      db.insertWatch(w("w1", "acc", "loan1"));
+      expect(db.updateWatchRules("w1", "intruder", { liquidation: false, loanGone: false })).toBe(false);
+      expect(db.updateWatchRules("w1", "acc", { liquidation: false, loanGone: true })).toBe(true);
+      expect(db.getWatch("w1")!.rules).toEqual({ liquidation: false, loanGone: true });
+      expect(db.deleteWatch("w1", "intruder")).toBe(false);
+      expect(db.deleteWatch("w1", "acc")).toBe(true);
+      expect(db.getWatch("w1")).toBeNull();
+    });
+
+    it("setWatchBand", () => {
+      const db = openDb(":memory:");
+      db.insertWatch(w("w1", "acc", "loan1"));
+      db.setWatchBand("w1", "danger");
+      expect(db.getWatch("w1")!.lastBand).toBe("danger");
+      db.setWatchBand("w1", null);
+      expect(db.getWatch("w1")!.lastBand).toBeNull();
+    });
+  });
+
+  describe("telegram", () => {
+    it("link tokens are single use and expire", () => {
+      const db = openDb(":memory:");
+      db.insertLinkToken("h1", "acc", 100, 700);
+      db.insertLinkToken("h2", "acc", 100, 700);
+      expect(db.consumeLinkToken("h1", 700)).toBeNull(); // expires_at <= now
+      expect(db.consumeLinkToken("h2", 699)).toBe("acc");
+      expect(db.consumeLinkToken("h2", 699)).toBeNull(); // used
+      expect(db.consumeLinkToken("missing", 1)).toBeNull();
+    });
+
+    it("purgeExpired drops expired link tokens", () => {
+      const db = openDb(":memory:");
+      db.insertLinkToken("h1", "acc", 100, 700);
+      db.purgeExpired(800);
+      expect(db.consumeLinkToken("h1", 0)).toBeNull();
+    });
+
+    it("chats: link, relink, one account per chat, mute, unlink", () => {
+      const db = openDb(":memory:");
+      expect(db.getTelegramChat("acc")).toBeNull();
+      db.linkTelegramChat("acc", "111", 5);
+      expect(db.getTelegramChat("acc")).toEqual({ accountId: "acc", chatId: "111", linkedAt: 5, mutedUntil: null });
+      expect(db.accountForChat("111")).toBe("acc");
+      db.linkTelegramChat("acc", "222", 6); // account moves to another chat
+      expect(db.accountForChat("111")).toBeNull();
+      expect(db.accountForChat("222")).toBe("acc");
+      db.linkTelegramChat("other", "222", 7); // the chat now follows the other account
+      expect(db.getTelegramChat("acc")).toBeNull();
+      expect(db.accountForChat("222")).toBe("other");
+      db.setChatMute("222", 1000);
+      expect(db.getTelegramChat("other")!.mutedUntil).toBe(1000);
+      db.setChatMute("222", null);
+      expect(db.getTelegramChat("other")!.mutedUntil).toBeNull();
+      expect(db.unlinkTelegram("other")).toBe(true);
+      expect(db.unlinkTelegram("other")).toBe(false);
+    });
+
+    it("records sent alerts", () => {
+      const db = openDb(":memory:");
+      db.recordAlert("w1", "liquidation", "danger", 50);
+      expect(db.alertsFor("w1")).toEqual([{ watchId: "w1", rule: "liquidation", value: "danger", sentAt: 50 }]);
+    });
+  });
 });

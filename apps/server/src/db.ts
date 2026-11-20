@@ -3,6 +3,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { RiskBand, WatchRules } from "@redline/api-types";
 import type { StoredChallenge } from "@redline/wizard-login/server";
 
 export interface AccountRow {
@@ -13,12 +14,32 @@ export interface AccountRow {
   proUntil: number | null;
 }
 
+/** a watch's last evaluated state: a risk band, or "gone" once the loan disappeared */
+export type StoredBand = RiskBand | "gone";
+
+export interface WatchRow {
+  id: string;
+  accountId: string;
+  loanId: string;
+  rules: WatchRules;
+  lastBand: StoredBand | null;
+  mutedUntil: number | null;
+  createdAt: number;
+}
+
+export interface TelegramChatRow {
+  accountId: string;
+  chatId: string;
+  linkedAt: number;
+  mutedUntil: number | null;
+}
+
 export interface Db {
   insertChallenge(c: StoredChallenge): void;
   getChallenge(nonceHex: string): StoredChallenge | null;
   /** atomic: true only for the first caller */
   markChallengeUsed(nonceHex: string, now: number): boolean;
-  /** delete challenges and sessions whose expiry has passed */
+  /** delete challenges, sessions and Telegram link tokens whose expiry has passed */
   purgeExpired(now: number): void;
   upsertAccount(a: { id: string; xpubReceive: string; xpubChange: string; now: number }): void;
   getAccount(id: string): AccountRow | null;
@@ -27,6 +48,30 @@ export interface Db {
   /** null when missing or expired (expires_at <= now) */
   getSession(id: string, now: number): { accountId: string } | null;
   deleteSession(id: string): void;
+
+  /** false when the account already watches that loan */
+  insertWatch(w: { id: string; accountId: string; loanId: string; rules: WatchRules; createdAt: number }): boolean;
+  getWatch(id: string): WatchRow | null;
+  listWatches(accountId: string): WatchRow[];
+  countWatches(accountId: string): number;
+  allWatches(): WatchRow[];
+  /** owner only; false when no such watch for that account */
+  updateWatchRules(id: string, accountId: string, rules: WatchRules): boolean;
+  deleteWatch(id: string, accountId: string): boolean;
+  setWatchBand(id: string, band: StoredBand | null): void;
+
+  insertLinkToken(tokenHash: string, accountId: string, createdAt: number, expiresAt: number): void;
+  /** atomic: the account id for a valid (unexpired, unused) token, marking it used; else null */
+  consumeLinkToken(tokenHash: string, now: number): string | null;
+  /** one chat per account and one account per chat */
+  linkTelegramChat(accountId: string, chatId: string, now: number): void;
+  getTelegramChat(accountId: string): TelegramChatRow | null;
+  accountForChat(chatId: string): string | null;
+  setChatMute(chatId: string, mutedUntil: number | null): void;
+  unlinkTelegram(accountId: string): boolean;
+
+  recordAlert(watchId: string, rule: string, value: string, sentAt: number): void;
+  alertsFor(watchId: string): Array<{ watchId: string; rule: string; value: string; sentAt: number }>;
   close(): void;
 }
 
@@ -39,11 +84,37 @@ CREATE TABLE IF NOT EXISTS challenges (
   xpub_receive TEXT, xpub_change TEXT, domain TEXT, expiry INTEGER, used_at INTEGER, binding_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, account_id TEXT, expires_at INTEGER);
+CREATE TABLE IF NOT EXISTS watches (
+  id TEXT PRIMARY KEY, account_id TEXT, loan_id TEXT, rule_liquidation INTEGER, rule_loan_gone INTEGER,
+  last_band TEXT NULL, muted_until INTEGER NULL, created_at INTEGER, UNIQUE(account_id, loan_id)
+);
+CREATE TABLE IF NOT EXISTS telegram_links (
+  token_hash TEXT PRIMARY KEY, account_id TEXT, created_at INTEGER, expires_at INTEGER, used_at INTEGER NULL
+);
+CREATE TABLE IF NOT EXISTS telegram_chats (
+  account_id TEXT PRIMARY KEY, chat_id TEXT, linked_at INTEGER, muted_until INTEGER NULL
+);
+CREATE INDEX IF NOT EXISTS telegram_chats_chat ON telegram_chats(chat_id);
+CREATE TABLE IF NOT EXISTS alerts_sent (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, watch_id TEXT, rule TEXT, value TEXT, sent_at INTEGER
+);
 `;
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => String(v);
 const num = (v: unknown) => Number(v);
+const numOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+const BANDS: ReadonlySet<string> = new Set(["safe", "watch", "danger", "critical", "gone"]);
+
+const toWatch = (r: Row): WatchRow => ({
+  id: str(r.id),
+  accountId: str(r.account_id),
+  loanId: str(r.loan_id),
+  rules: { liquidation: num(r.rule_liquidation) === 1, loanGone: num(r.rule_loan_gone) === 1 },
+  lastBand: typeof r.last_band === "string" && BANDS.has(r.last_band) ? (r.last_band as StoredBand) : null,
+  mutedUntil: numOrNull(r.muted_until),
+  createdAt: num(r.created_at),
+});
 
 export function openDb(path: string): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -71,6 +142,35 @@ export function openDb(path: string): Db {
     createSession: db.prepare(`INSERT INTO sessions (id, account_id, expires_at) VALUES (?, ?, ?)`),
     getSession: db.prepare(`SELECT account_id FROM sessions WHERE id = ? AND expires_at > ?`),
     deleteSession: db.prepare(`DELETE FROM sessions WHERE id = ?`),
+    insertWatch: db.prepare(
+      `INSERT INTO watches (id, account_id, loan_id, rule_liquidation, rule_loan_gone, last_band, muted_until, created_at)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?) ON CONFLICT(account_id, loan_id) DO NOTHING`,
+    ),
+    getWatch: db.prepare(`SELECT * FROM watches WHERE id = ?`),
+    listWatches: db.prepare(`SELECT * FROM watches WHERE account_id = ? ORDER BY created_at, rowid`),
+    countWatches: db.prepare(`SELECT COUNT(*) AS n FROM watches WHERE account_id = ?`),
+    allWatches: db.prepare(`SELECT * FROM watches ORDER BY created_at, rowid`),
+    updateRules: db.prepare(`UPDATE watches SET rule_liquidation = ?, rule_loan_gone = ? WHERE id = ? AND account_id = ?`),
+    deleteWatch: db.prepare(`DELETE FROM watches WHERE id = ? AND account_id = ?`),
+    setBand: db.prepare(`UPDATE watches SET last_band = ? WHERE id = ?`),
+    insertLink: db.prepare(
+      `INSERT INTO telegram_links (token_hash, account_id, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, NULL)`,
+    ),
+    consumeLink: db.prepare(
+      `UPDATE telegram_links SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING account_id`,
+    ),
+    purgeLinks: db.prepare(`DELETE FROM telegram_links WHERE expires_at <= ?`),
+    deleteOtherChat: db.prepare(`DELETE FROM telegram_chats WHERE chat_id = ? AND account_id <> ?`),
+    upsertChat: db.prepare(
+      `INSERT INTO telegram_chats (account_id, chat_id, linked_at, muted_until) VALUES (?, ?, ?, NULL)
+       ON CONFLICT(account_id) DO UPDATE SET chat_id = excluded.chat_id, linked_at = excluded.linked_at, muted_until = NULL`,
+    ),
+    getChat: db.prepare(`SELECT * FROM telegram_chats WHERE account_id = ?`),
+    chatAccount: db.prepare(`SELECT account_id FROM telegram_chats WHERE chat_id = ?`),
+    setChatMute: db.prepare(`UPDATE telegram_chats SET muted_until = ? WHERE chat_id = ?`),
+    deleteChat: db.prepare(`DELETE FROM telegram_chats WHERE account_id = ?`),
+    recordAlert: db.prepare(`INSERT INTO alerts_sent (watch_id, rule, value, sent_at) VALUES (?, ?, ?, ?)`),
+    alertsFor: db.prepare(`SELECT * FROM alerts_sent WHERE watch_id = ? ORDER BY id`),
   };
 
   return {
@@ -103,6 +203,7 @@ export function openDb(path: string): Db {
     purgeExpired(now) {
       q.purgeChallenges.run(now);
       q.purgeSessions.run(now);
+      q.purgeLinks.run(now);
     },
     upsertAccount(a) {
       // the account id is sha256(xpub_receive), so an existing row can never legitimately differ
@@ -133,6 +234,77 @@ export function openDb(path: string): Db {
     },
     deleteSession(id) {
       q.deleteSession.run(id);
+    },
+    insertWatch(w) {
+      const r = q.insertWatch.run(w.id, w.accountId, w.loanId, w.rules.liquidation ? 1 : 0, w.rules.loanGone ? 1 : 0, w.createdAt);
+      return Number(r.changes) === 1;
+    },
+    getWatch(id) {
+      const r = q.getWatch.get(id) as Row | undefined;
+      return r ? toWatch(r) : null;
+    },
+    listWatches(accountId) {
+      return (q.listWatches.all(accountId) as Row[]).map(toWatch);
+    },
+    countWatches(accountId) {
+      return num((q.countWatches.get(accountId) as Row).n);
+    },
+    allWatches() {
+      return (q.allWatches.all() as Row[]).map(toWatch);
+    },
+    updateWatchRules(id, accountId, rules) {
+      return Number(q.updateRules.run(rules.liquidation ? 1 : 0, rules.loanGone ? 1 : 0, id, accountId).changes) === 1;
+    },
+    deleteWatch(id, accountId) {
+      return Number(q.deleteWatch.run(id, accountId).changes) === 1;
+    },
+    setWatchBand(id, band) {
+      q.setBand.run(band, id);
+    },
+    insertLinkToken(tokenHash, accountId, createdAt, expiresAt) {
+      q.insertLink.run(tokenHash, accountId, createdAt, expiresAt);
+    },
+    consumeLinkToken(tokenHash, now) {
+      const r = q.consumeLink.get(now, tokenHash, now) as Row | undefined;
+      return r ? str(r.account_id) : null;
+    },
+    linkTelegramChat(accountId, chatId, now) {
+      db.exec("BEGIN");
+      try {
+        q.deleteOtherChat.run(chatId, accountId);
+        q.upsertChat.run(accountId, chatId, now);
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+    },
+    getTelegramChat(accountId) {
+      const r = q.getChat.get(accountId) as Row | undefined;
+      return r
+        ? { accountId: str(r.account_id), chatId: str(r.chat_id), linkedAt: num(r.linked_at), mutedUntil: numOrNull(r.muted_until) }
+        : null;
+    },
+    accountForChat(chatId) {
+      const r = q.chatAccount.get(chatId) as Row | undefined;
+      return r ? str(r.account_id) : null;
+    },
+    setChatMute(chatId, mutedUntil) {
+      q.setChatMute.run(mutedUntil, chatId);
+    },
+    unlinkTelegram(accountId) {
+      return Number(q.deleteChat.run(accountId).changes) === 1;
+    },
+    recordAlert(watchId, rule, value, sentAt) {
+      q.recordAlert.run(watchId, rule, value, sentAt);
+    },
+    alertsFor(watchId) {
+      return (q.alertsFor.all(watchId) as Row[]).map((r) => ({
+        watchId: str(r.watch_id),
+        rule: str(r.rule),
+        value: str(r.value),
+        sentAt: num(r.sent_at),
+      }));
     },
     close() {
       db.close();
