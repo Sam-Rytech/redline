@@ -81,6 +81,10 @@ export interface LoansResponse {
   blockHeight: number;
   priceUsd: number;
   updatedAt: ISODate;
+  /** true when the last good chain read is older than 5 minutes: show the age, and no alerts are sent */
+  stale: boolean;
+  /** seconds since the last good chain read */
+  dataAgeSeconds: number;
   summary: LoansSummary;
   loans: LoanView[];
 }

@@ -30,7 +30,7 @@ const views = computeLoanViews(
   200,
 );
 const loanState: LoanState = {
-  blockHeight: 1, priceUsd: 200, updatedAt: NOW.toISOString(), loans: views, byId: new Map(views.map((v) => [v.id, v])), raw: [],
+  blockHeight: 1, priceUsd: 200, updatedAt: NOW.toISOString(), loans: views, byId: new Map(views.map((v) => [v.id, v])), raw: [], missingSidecars: 0,
 };
 const reader = (s: LoanState | null): ChainReader => ({ current: () => s, lastError: () => null, refresh: async () => {}, start() {}, stop() {}, onUpdate() {} });
 

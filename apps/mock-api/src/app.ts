@@ -90,6 +90,8 @@ export function createApp() {
       blockHeight: MOCK_BLOCK_HEIGHT,
       priceUsd: MOCK_PRICE_USD,
       updatedAt: new Date().toISOString(),
+      stale: false,
+      dataAgeSeconds: 0,
       summary: summarize(loans),
       loans,
     };

@@ -94,11 +94,72 @@ describe("chain reader", () => {
     expect(r.lastError()).toMatch(/0 loans/);
   });
 
-  it("0 loans on the very first refresh is accepted", async () => {
+  it("0 loans on the very first refresh is refused (a partial read must never look like an empty protocol)", async () => {
     const r = mk(async () => snap([]));
     await r.refresh();
-    expect(r.current()!.loans).toEqual([]);
+    expect(r.current()).toBeNull();
+    expect(r.lastError()).toMatch(/0 loans/);
+  });
+
+  it("a refresh with fewer than 80% of the previous loans is discarded (SECURITY.md, PRD R2)", async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => raw(`l${i}`, 1000, 10e8));
+    let loans = ten;
+    const r = mk(async () => snap(loans));
+    await r.refresh();
+    const before = r.current();
+    loans = ten.slice(0, 7); // 70%
+    await r.refresh();
+    expect(r.current()).toBe(before);
+    expect(r.lastError()).toMatch(/7 of 10/);
+    loans = ten.slice(0, 8); // exactly 80% is accepted
+    await r.refresh();
+    expect(r.current()!.loans).toHaveLength(8);
     expect(r.lastError()).toBeNull();
+  });
+
+  it("a refresh from a server behind the last good block is discarded", async () => {
+    let height = 200;
+    const r = mk(async () => snap([A, B], height));
+    await r.refresh();
+    height = 198;
+    await r.refresh();
+    expect(r.current()!.blockHeight).toBe(200);
+    expect(r.lastError()).toMatch(/block 198/);
+    height = 200; // the same block again is fine (price moves between blocks)
+    await r.refresh();
+    expect(r.lastError()).toBeNull();
+  });
+
+  it("keeps the count of loans that had no sidecar", async () => {
+    const r = mk(async () => ({ ...snap([A]), skipped: 2 }));
+    await r.refresh();
+    expect(r.current()!.missingSidecars).toBe(2);
+  });
+
+  it("after a failed refresh, retries once after retryMs instead of waiting a full interval", async () => {
+    let calls = 0;
+    let fail = true;
+    const r = createChainReader({
+      fetch: async () => {
+        calls++;
+        if (fail) throw new Error("electrum down");
+        return snap([A]);
+      },
+      intervalMs: 60_000,
+      retryMs: 10_000,
+      now: () => NOW,
+      log: () => {},
+    });
+    r.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toBe(1);
+    fail = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toBe(2);
+    expect(r.current()).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toBe(2); // no further quick retries after a success
+    r.stop();
   });
 
   it("skips overlapping refreshes", async () => {

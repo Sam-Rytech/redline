@@ -19,6 +19,7 @@ const state = (updatedAt: string): LoanState => ({
   loans: views,
   byId: new Map(views.map((v) => [v.id, v])),
   raw: [],
+  missingSidecars: 0,
 });
 const fakeReader = (s: LoanState | null, error: string | null = null): ChainReader => ({
   current: () => s,
@@ -52,6 +53,8 @@ describe("server app", () => {
     expect(body.blockHeight).toBe(950000);
     expect(body.priceUsd).toBe(200);
     expect(body.updatedAt).toBe(ago(1000));
+    expect(body.stale).toBe(false);
+    expect(body.dataAgeSeconds).toBe(1);
     expect(body.loans.map((l) => l.id)).toEqual(["b", "a", "s"]);
     expect(body.summary).toMatchObject({
       total: 3,
@@ -63,6 +66,12 @@ describe("server app", () => {
       strandedCount: 1,
       strandedBch: 5,
     });
+  });
+
+  it("GET /api/loans says when the data is older than 5 minutes (PRD R3)", async () => {
+    const body = (await (await appFor(fakeReader(state(ago(6 * 60_000)))).request("/api/loans")).json()) as LoansResponse;
+    expect(body.stale).toBe(true);
+    expect(body.dataAgeSeconds).toBe(360);
   });
 
   it("GET /api/loans/:id hit and miss", async () => {
@@ -90,6 +99,7 @@ describe("server app", () => {
       updatedAt: ago(60_000),
       stale: false,
       lastError: null,
+      missingSidecars: 0,
     });
   });
 
@@ -101,10 +111,15 @@ describe("server app", () => {
     expect(body.lastError).toBe("electrum down");
   });
 
+  it("health reports loans that had no sidecar instead of dropping them silently", async () => {
+    const res = await appFor(fakeReader({ ...state(ago(0)), missingSidecars: 3 })).request("/api/health");
+    expect(((await res.json()) as { missingSidecars: number }).missingSidecars).toBe(3);
+  });
+
   it("health: stale with no state, still 200", async () => {
     const res = await appFor(fakeReader(null)).request("/api/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, blockHeight: null, updatedAt: null, stale: true, lastError: null });
+    expect(await res.json()).toEqual({ ok: true, blockHeight: null, updatedAt: null, stale: true, lastError: null, missingSidecars: null });
   });
 
   it("unknown /api path is 404 not_found", async () => {

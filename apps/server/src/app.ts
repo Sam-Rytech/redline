@@ -223,16 +223,26 @@ export function createApp(deps: AppDeps) {
   app.get("/health", (c) => {
     const s = reader.current();
     const stale = !s || now().getTime() - new Date(s.updatedAt).getTime() > STALE_MS;
-    return c.json({ ok: true, blockHeight: s?.blockHeight ?? null, updatedAt: s?.updatedAt ?? null, stale, lastError: reader.lastError() });
+    return c.json({
+      ok: true,
+      blockHeight: s?.blockHeight ?? null,
+      updatedAt: s?.updatedAt ?? null,
+      stale,
+      lastError: reader.lastError(),
+      missingSidecars: s?.missingSidecars ?? null,
+    });
   });
 
   app.get("/loans", (c) => {
     const s = reader.current();
     if (!s) return notReady(c);
+    const ageMs = now().getTime() - new Date(s.updatedAt).getTime();
     const body: LoansResponse = {
       blockHeight: s.blockHeight,
       priceUsd: s.priceUsd,
       updatedAt: s.updatedAt,
+      stale: ageMs > STALE_MS,
+      dataAgeSeconds: Math.max(0, Math.floor(ageMs / 1000)),
       summary: summarize(s.loans),
       loans: s.loans,
     };
