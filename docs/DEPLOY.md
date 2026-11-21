@@ -25,7 +25,8 @@ Install flyctl (Windows PowerShell: `iwr https://fly.io/install.ps1 -useb | iex`
    | `SESSION_SECRET` | 64 random hex characters (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`) | encrypts session keys and signs the age cookie; changing it signs everyone out |
    | `PUBLIC_ORIGIN` | `https://<your-vercel-domain>` | the only Origin allowed on POST, PATCH, DELETE |
    | `LOGIN_DOMAIN` | `<your-vercel-domain>` (host only) | the domain the wallet signs into the login transaction |
-   | `TRUST_PROXY_HOPS` | `0` for now; see step 4 | how to find the client IP for rate limits |
+   | `TRUST_PROXY_HOPS` | `0` | not used behind Vercel; see section 4 |
+   | `CLIENT_IP_HEADER`, `PEER_IP_HEADER` | `x-real-ip`, `fly-client-ip` | the client IP for rate limits; see section 4 |
    | `TELEGRAM_BOT_TOKEN` | from @BotFather (`/newbot`) | Telegram linking and alerts |
    | `MERCHANT_ADDRESS` | your `bitcoincash:z...` address | where Pro pass payments go |
    | `ELECTRUM_HOST` | leave unset | five public Fulcrum servers are tried in turn |
@@ -51,16 +52,19 @@ Install flyctl (Windows PowerShell: `iwr https://fly.io/install.ps1 -useb | iex`
 One running server per bot token: leave `TELEGRAM_BOT_TOKEN` empty on your own machine while the
 hosted server uses it, or the two fight over updates.
 
-## 4. Find the proxy hop count
+## 4. Client IP for rate limits
 
-The rate limits need the visitor's real IP, which arrives in `x-forwarded-for` behind Vercel and
-Fly.
+The rate limits need the visitor's real IP. Behind Vercel and Fly, `TRUST_PROXY_HOPS` cannot find it:
+Vercel passes a visitor's own `x-forwarded-for` through, and its outgoing addresses change per
+request (measured 21 Nov 2026; `SECURITY.md`). Set instead:
 
-1. `fly secrets set LOG_XFF=1`.
-2. From the Vercel site, start one sign-in.
-3. In `fly logs`, read the `x-forwarded-for (1/5): ...` line. Find your own public IP in it
-   and count its position from the right: right-most is 1. Set `TRUST_PROXY_HOPS` to that number.
-4. `fly secrets set TRUST_PROXY_HOPS=<n>`, then `fly secrets unset LOG_XFF`.
+```bash
+fly secrets set CLIENT_IP_HEADER=x-real-ip PEER_IP_HEADER=fly-client-ip TRUST_PROXY_HOPS=0 --app redline-bch
+```
+
+To check the headers again later: `fly secrets set LOG_XFF=1`, send a request to
+`https://<vercel-domain>/api/auth/probe`, read the `x-forwarded-for (1/5): ...` line in `fly logs`
+(it also shows `x-real-ip` and `fly-client-ip`), then `fly secrets unset LOG_XFF`.
 
 ## 5. Checks after deploy
 

@@ -18,6 +18,18 @@ export interface ServerConfig {
   publicOrigin: string;
   /** how many proxies append to x-forwarded-for in front of us; 0 = use the TCP peer */
   trustProxyHops: number;
+  /**
+   * Header the front proxy sets to the visitor's IP (Vercel: x-real-ip; Vercel does not always
+   * overwrite a value the visitor sent, so peerIpHeader is the backstop). Used as the per-visitor
+   * rate-limit key; empty = use trustProxyHops.
+   */
+  clientIpHeader: string | undefined;
+  /**
+   * Header the host's edge sets to whoever connected to it (Fly: fly-client-ip). That connection
+   * gets a looser cap too, so a request that skips the front proxy and fakes clientIpHeader is
+   * still limited by its real address.
+   */
+  peerIpHeader: string | undefined;
   /** log the raw x-forwarded-for of the first 5 /api/auth requests, to set trustProxyHops */
   logXff: boolean;
   /** Telegram bot token from @BotFather; alerts and linking are off when unset. Never logged. */
@@ -66,6 +78,11 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
 
   const hops = env.TRUST_PROXY_HOPS ?? "";
   if (hops !== "" && !/^\d+$/.test(hops)) throw new Error("TRUST_PROXY_HOPS must be a whole number (0 or more)");
+  const headerName = (name: string, v: string | undefined): string | undefined => {
+    if (!v) return undefined;
+    if (!/^[A-Za-z0-9-]+$/.test(v)) throw new Error(`${name} must be a header name like x-real-ip`);
+    return v.toLowerCase();
+  };
 
   return {
     port: positive(env.PORT, 8787),
@@ -78,6 +95,8 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     loginDomain: env.LOGIN_DOMAIN || "localhost",
     publicOrigin: publicOrigin || "http://localhost:5173",
     trustProxyHops: hops === "" ? 0 : Number(hops),
+    clientIpHeader: headerName("CLIENT_IP_HEADER", env.CLIENT_IP_HEADER),
+    peerIpHeader: headerName("PEER_IP_HEADER", env.PEER_IP_HEADER),
     logXff: env.LOG_XFF === "1",
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || undefined,
     merchantAddress: parseMerchant(env.MERCHANT_ADDRESS),

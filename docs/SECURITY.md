@@ -127,6 +127,16 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
 - The client IP for rate limits is the TCP peer, or, behind proxies, the entry
   `TRUST_PROXY_HOPS` positions from the right of `x-forwarded-for` (entries further left are
   written by the client and ignored). Check the real chain once on staging with `LOG_XFF=1`.
+- Behind Vercel and Fly (measured 21 Nov 2026) no hop count works: Vercel passes a visitor's own
+  `x-forwarded-for` through, and its outgoing addresses change per request. So production uses
+  `CLIENT_IP_HEADER=x-real-ip` (the visitor's IP, set by Vercel) as the per-visitor key, and
+  `PEER_IP_HEADER=fly-client-ip` (set by Fly to whoever connected; it cannot be faked) for a second
+  cap of 20 times the limit.
+- Known limit: Vercel does not always overwrite `x-real-ip`. In tests, 3 of 5 requests that sent
+  their own `x-real-ip` kept the fake value. So a caller faking it gets around the per-visitor limit
+  but is still held by the per-connection cap (each Vercel outgoing address, or the caller's own
+  address when it skips Vercel). A full fix needs code at Vercel's edge that sets a header Fly can
+  verify; not done for the hackathon.
 - Errors never include stack traces or internals. The envelope is `{ error: { code, message } }`.
 - The server runs on an always-on host with a persistent volume. A sleeping host stops alerts.
 
@@ -138,7 +148,7 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
   lists every variable the code reads and nothing else.
 - Variables: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`,
   `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`, `BACKUP_DIR`, `TRUST_PROXY_HOPS`,
-  `LOG_XFF`. All are read today. Telegram is off without `TELEGRAM_BOT_TOKEN`, and payments
+  `CLIENT_IP_HEADER`, `PEER_IP_HEADER`, `LOG_XFF`. All are read today. Telegram is off without `TELEGRAM_BOT_TOKEN`, and payments
   are off without `MERCHANT_ADDRESS` (a mainnet `bitcoincash:` address, checked at start). `SESSION_SECRET` (at least 32 characters) and `PUBLIC_ORIGIN`
   are required in production. `apps/server/.env.example` lists exactly the ones read.
 
@@ -150,11 +160,17 @@ stored and for how long.
 
 ## Security checklist before launch
 
-- [ ] Challenge binding test: verify from a different browser fails.
-- [ ] Replay and expiry tests for the nonce.
-- [ ] Logs inspected for xpubs, signed hex and cookies: none.
-- [ ] Rate limits exercised.
-- [ ] CSRF: a cross-origin POST is rejected.
-- [ ] Double payment test with the same inputs.
-- [ ] Partial-read test: alert engine sends nothing.
-- [ ] Dependency versions pinned and audited.
+- [x] Challenge binding test: verify from a different browser fails (`auth.test.ts`, 403 `challenge_mismatch`).
+- [x] Replay and expiry tests for the nonce (`auth.test.ts`, 410 `challenge_used` / `challenge_expired`).
+- [ ] Logs inspected for xpubs, signed hex and cookies: none. 21 Nov: no log call prints a body,
+  cookie or key, and the production logs are clean; check again after the first real sign-in.
+- [x] Rate limits exercised on production through Vercel, 21 Nov (11th request: 429; see
+  "Known limit" above).
+- [x] CSRF: a cross-origin POST is rejected (production, 21 Nov: 403 `forbidden_origin`, also with
+  no Origin).
+- [x] Double payment test with the same inputs (`invoices.test.ts`: same inputs give the same
+  invoice; submitting twice extends Pro once).
+- [x] Partial-read test: alert engine sends nothing (`reader.test.ts` discards partial reads;
+  `alerts.test.ts` sends nothing from stale data).
+- [x] Dependency versions pinned and audited (21 Nov: every version exact, `pnpm audit --prod`
+  finds nothing).
