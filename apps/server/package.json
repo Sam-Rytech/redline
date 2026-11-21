@@ -17,6 +17,7 @@
     "@redline/wizard-login": "workspace:*",
     "cashscript": "0.14.0",
     "grammy": "1.46.0",
-    "hono": "4.13.19"
+    "hono": "4.13.19",
+    "tsx": "4.23.15"
   }
 }
