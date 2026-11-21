@@ -72,6 +72,40 @@ API errors use this envelope: `{ "error": { "code": "...", "message": "..." } }`
 
 Store the invoice id in localStorage so a reload can `GET /api/invoices/:id` and show "Already paid ✓".
 
+## Error codes
+
+All errors use the envelope above. Codes in use today are in the line above; these are agreed
+and arrive with the code that needs them.
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `bad_request` | body fails validation |
+| 401 | `unauthorized` | no or expired session |
+| 403 | `age_blocked` | age screen failed (remembered; changing the date does not pass) |
+| 403 | `forbidden_origin` | a state-changing request whose `Origin` is not ours, or not JSON |
+| 403 | `challenge_mismatch` | `/auth/verify` came from a different browser than `/auth/challenge` |
+| 403 | `watch_limit` | free plan already has its watch |
+| 404 | `not_found` | unknown route or loan |
+| 409 | `watch_exists` | loan already watched |
+| 410 | `challenge_expired` / `challenge_used` | nonce older than 5 minutes or already used |
+| 413 | `too_large` | body over 16 KB |
+| 422 | `login_invalid` | signed transaction fails verification |
+| 429 | `rate_limited` | see `SECURITY.md` for limits |
+| 503 | `not_ready` | chain data not loaded yet |
+
+## Planned contract changes (not yet in `api-types`)
+
+Each becomes a type change, announced in the team chat, when it is built.
+
+| Change | Why |
+|---|---|
+| `LoansResponse.stale: boolean` and `dataAgeSeconds: number` | the data can be old and the screen must say so; alerts are not sent from stale data |
+| `POST /api/age-check` `{ dateOfBirth: "YYYY-MM-DD" }` returns `{ ok: true }` or 403 `age_blocked`. Date is never stored | age screen before the first challenge (`COMPLIANCE.md`) |
+| `POST /api/auth/challenge` sets an HttpOnly cookie `rl_ch`; `/auth/verify` must carry it | blocks the sign-in relay attack (`SECURITY.md`) |
+| `DELETE /api/me` returns `{ ok: true }` | account deletion in one step |
+| `Invoice` response adds `terms: { priceUsd, days: 30, renews: false }` | the pay button shows the terms beside it |
+| `LoanView.claimUrl: string \| null` for stranded loans | link to claim the leftover BCH in the official Paryon app |
+
 ## Mock-only behaviour
 
 - `POST /api/auth/verify` with any `{ "signedTxHex": "00" }` signs you in — no wallet needed.

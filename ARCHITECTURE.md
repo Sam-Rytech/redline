@@ -6,6 +6,8 @@
 **Deadline:** Sun 22 Nov 2026, 14:00 UTC (15:00 Lagos). Internal freeze: Sun 11:00 Lagos.
 **One-liner:** A smoke alarm for ParyonUSD loans. Sign in with your BCH wallet (no password), see your loans' risk, get Telegram alerts before you lose money.
 
+Related documents (all in `docs/`): `PRD.md` (what and why), `SECURITY.md`, `DATABASE.md`, `API.md`, `DESIGN.md`, `BRAND.md`, `COMPLIANCE.md`, `PRACTICES.md`. Where `SECURITY.md` or `DATABASE.md` differ from this file, they win; the differences are listed in `DATABASE.md`.
+
 Items marked **⚠ VERIFY** are not yet confirmed and each has a gate in `PROGRESS.md`. Do not build on top of them until the gate passes.
 
 ---
@@ -69,7 +71,7 @@ Repo (pnpm workspaces):
 
 1. Client connects via WizardConnect → receives xpubs (`receive`, `change`; `defi` = index 7 if present).
 2. Client derives receive/change addresses (indices 0–19 each), asks the server for UTXOs, picks the **smallest pure-BCH UTXO ≥ 2,000 sats** (no tokens).
-3. `POST /auth/challenge {xpubReceive, outpoint, path:[pathName, index]}` → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint}` and returns them.
+3. `POST /auth/challenge {xpubReceive, outpoint, path:[pathName, index]}` → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, browser_id}`, sets an HttpOnly `rl_ch` cookie holding `browser_id`, and returns the nonce, expiry and domain. `/auth/verify` must carry the same cookie, so a challenge answered from another browser is rejected (relay attack, see `SECURITY.md`).
 4. Client builds the login transaction (CashScript `TransactionBuilder`, placeholder P2PKH unlocker):
    - Input 0: the chosen UTXO
    - Output 0: `OP_RETURN` → `"WZL1"` | domain (utf-8) | nonce (16 B) | expiry (uint32 LE)
@@ -145,7 +147,7 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 
 ### 3.3 `apps/server`
 
-**Chain reader** — subscribes to block headers on Fulcrum; on each new block (~10 min): refresh all loan UTXOs + price → in-memory snapshot + `loan_snapshots` row. Also a 60 s safety poll.
+**Chain reader** — subscribes to block headers on Fulcrum; on each new block (~10 min): refresh all loan UTXOs + price → in-memory snapshot + `loan_snapshots` row. Also a 60 s safety poll. Integrity rules: a refresh that returns fewer than 80% of the previous loans is discarded; a loan is "gone" only after 3 consecutive successful reads without it; loans with no sidecar are counted in `/api/health`, not dropped silently; stale data (older than 5 minutes) is flagged on `/api/loans` and never used to send alerts.
 
 **Alert engine** — after each refresh, evaluate every watch:
 
@@ -197,6 +199,8 @@ Screens:
 
 ## 4. Data model (SQLite)
 
+Superseded by `docs/DATABASE.md` (no xpubs in `accounts`, challenge browser binding, alert idempotency, age result). The sketch below is kept for history only.
+
 ```
 accounts(id TEXT PK /*sha256(xpubReceive)*/, xpub_receive, xpub_change, created_at, pro_until)
 challenges(nonce PK, account_hint, outpoint, path, domain, expiry, used_at)
@@ -226,7 +230,7 @@ loan_snapshots(block_height, loan_token_id, debt, collateral_sats, rate, next_ra
 | Front end | Vite + React + Tailwind | |
 | Hosting | Web: Vercel. Server: Railway (or any always-on VM) + persistent volume | Free tiers that sleep (Render free) **stop alerts** — don't use them |
 
-Env vars: `ELECTRUM_URL`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`, `LOGIN_DOMAIN`, `MERCHANT_ADDRESS` (token-aware `z…`), `PRICE_SOURCE`.
+Env vars: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`, `LOGIN_DOMAIN`, `MERCHANT_ADDRESS` (token-aware `z…`), `DATABASE_PATH`. (`ELECTRUM_HOST` is what the code reads today; the price source is the on-chain oracle contract, so there is no `PRICE_SOURCE` setting.)
 
 ---
 
@@ -237,7 +241,8 @@ Env vars: `ELECTRUM_URL`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN
 - Session cookie: HttpOnly, Secure, SameSite=Lax; rotate on login.
 - Telegram link tokens: single-use, 10-minute expiry.
 - Rate-limit `/auth/*` and the UTXO proxy.
-- Keep xpubs server-side only; never show them in the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
+- Keep xpubs server-side only, only inside the encrypted session row, never in `accounts`, the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
+- Web and API share one origin through Vercel rewrites, so cookies are first-party and no CORS is needed. Full rules in `docs/SECURITY.md`.
 - No private keys anywhere on the server. The merchant address is receive-only.
 
 ---

@@ -23,7 +23,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 ## Scope cuts (we lost Tue–Thu)
 
 - **Sign-in:** build verification so it accepts both outcomes (not broadcast, or broadcast-and-spent-by-this-tx). G1 becomes "which wallets broadcast" — informational, not blocking.
-- **Alerts:** only **liquidation distance** (bands + hysteresis) and **loan gone** are required. Redemption-queue, redemption-started, rate-change, stranded → stretch.
+- **Alerts:** only **liquidation distance** (bands + hysteresis) and **loan gone** are required. Redemption-queue, redemption-started, rate-change and stranded-appears alert rules → stretch. (21 Nov: showing stranded collateral on the landing page and on a signed-in loan card is a must, not a stretch; see `docs/PRD.md`.)
 - **Payment:** BCH only. PUSD payment → stretch.
 - **Free vs Pro:** Free = 1 watch; Pro = unlimited watches. Rule gating is dropped.
 
@@ -35,6 +35,8 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 |---|---|---|---|---|---|---|
 | G0 | Accounts & funds | Sam | Fri 16:00 | Repo ✅; jadonamite accepted invite; BUIDL draft on DoraHacks; Paytaca + Selene each ~$0.50 BCH; bot token | Ask in BLAZE Telegram for a few cents | 🟨 |
 | G-API | Front end unblocked | Claude | Fri 17:00 | `api-types` + mock server on `main`; jadonamite can `pnpm dev` the web app against it | — | ✅ |
+| GL1 | Liquidations counted | Claude | before alert-engine work | Count of Paryon liquidations since 30 Apr 2026 from open chain data, written into `docs/PRD.md` section 2 | If zero and GL2 fails, apply the fail condition in the PRD | ⬜ |
+| GL2 | Stranded BCH claimable | Claude | before landing-page copy | Confirm from the Paryon contract docs and one real loan that the owner (loan key holder) can withdraw leftover collateral | Show it as information only; drop the claim link | ⬜ |
 | G2 | Loan decode matches | Claude | Fri 23:00 | For 5 live loans, decoded debt, collateral BCH, rate, liq price equal stats.paryonusd.com | Fix units/endianness; Sat 10:00 ask in Paryon Telegram | ✅ |
 | G1 | `broadcast:false` behaviour known | Sam | Sat 11:00 | Know for Paytaca and Selene whether the login tx is broadcast | Already covered by fallback — just document it | ⬜ |
 | G3 | Sign-in works end to end | Sam + Claude | Sat 14:00 | Same wallet on laptop and phone → same account; reused/expired nonce rejected | Ship "Watch any loan" without sign-in; keep going | ⬜ |
@@ -127,6 +129,13 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 | 20 Nov | Payment is a one-time **30-day Pro pass**, not a recurring charge | It is the required mainnet tx and the "will it make money" proof; no auto-renew to build |
 | 20 Nov | Roles: Jadonamite = front end; Sam + Claude Code = everything else | Front end can run in parallel against a mock API |
 | 20 Nov | Scope cut to liquidation + loan-gone alerts, BCH-only payment; sign-in accepts broadcast or not | Nothing built by Fri; ~45 h left |
+| 21 Nov | Stranded collateral display promoted from stretch to must | Best-evidenced problem: 53 loans, 352.8 BCH at zero debt. Review: `docs/review/2026-11-21-ideation-review.md` |
+| 21 Nov | Sign-in challenge bound to the browser (`rl_ch` cookie) | Blocks a relay attack where an attacker's page gets a victim to sign our challenge |
+| 21 Nov | xpubs stored only in the encrypted session row, not in `accounts` | Data minimisation; alerts do not need them |
+| 21 Nov | "Loan gone" needs 3 consecutive reads; a read missing over 20% of loans is discarded; stale data sends no alerts | A partial Fulcrum answer must not produce false alerts |
+| 21 Nov | Red is the strong accent (logo, loader, primary button); the critical band always carries its word and needle position | Owner's brand call; colour is never the only signal |
+| 21 Nov | Hero is one real object, a race tachometer with a shift light, that moves through the landing page on scroll | Name origin, the alarm and the loan reading in one object (`docs/BRAND.md`) |
+| 21 Nov | Docs set added in `docs/`: PRD, security, database, design, brand, compliance, practices | Teammate reads them on pull |
 
 ---
 
