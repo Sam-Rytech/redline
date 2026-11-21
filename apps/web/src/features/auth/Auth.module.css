@@ -7,5 +7,6 @@
 .field input { min-height: var(--target-min); padding: 0 var(--space-4); border-radius: var(--radius-control); border: 1.5px solid var(--separator); background: var(--bg-elevated); font-weight: 400; }
 .err { color: var(--brand-red-text); line-height: var(--lead-prose); }
 .steps { margin: 0; padding-left: 1.25rem; display: grid; gap: var(--space-2); line-height: var(--lead-prose); color: var(--label-2); }
-.qr { width: 200px; aspect-ratio: 1; border-radius: var(--radius-card); border: 1.5px dashed var(--separator); display: grid; place-items: center; color: var(--label-3); background: var(--bg-elevated); }
 @media (max-width: 800px) { .page { padding-top: var(--space-8); } }
+.status { color: var(--label); line-height: var(--lead-prose); }
+.address { display: block; margin-top: var(--space-2); color: var(--label); overflow-wrap: anywhere; text-transform: none; }

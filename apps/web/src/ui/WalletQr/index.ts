@@ -1,0 +1,1 @@
+export { WalletQr } from "./WalletQr";
