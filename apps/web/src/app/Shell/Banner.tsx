@@ -30,7 +30,7 @@ export function Banner() {
         ) : (
           <span className={s.missing}>Slides link missing</span>
         )}
-        <a href={REPO_URL} target="_blank" rel="noreferrer">Source</a>
+        <a href={REPO_URL} target="_blank" rel="noreferrer">GitHub: Sam-Rytech/redline</a>
         {TOKEN_ADDRESS ? (
           <button type="button" className={s.address} onClick={copy} title={TOKEN_ADDRESS} aria-label={`Copy CashTokens address for EMBER2026 votes: ${TOKEN_ADDRESS}`}>
             <span className={s.addressLabel}>Vote EMBER2026</span>

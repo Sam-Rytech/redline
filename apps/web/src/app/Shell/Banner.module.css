@@ -7,7 +7,7 @@
 .event { color: #F5F1E8; }
 .started { flex: 1 1 auto; }
 .links { display: flex; align-items: center; gap: var(--space-5); }
-.links a { display: inline-flex; align-items: center; min-height: var(--target-min); color: #F5F1E8; text-decoration: underline; text-underline-offset: 3px; }
+.links a { display: inline-flex; align-items: center; min-height: var(--target-min); color: #F5F1E8; text-transform: none; text-decoration: underline; text-underline-offset: 3px; }
 .links a:hover { color: #FF7068; }
 .address {
   display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); max-width: 42ch;
