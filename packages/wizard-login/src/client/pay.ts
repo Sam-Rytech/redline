@@ -196,7 +196,7 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
     return body as T;
   };
   const getInvoice = (id: string) => api<Invoice>(`/invoices/${encodeURIComponent(id)}`);
-  const paidDetail = (inv: Invoice) => `Already paid ✓ txid ${inv.txid}`;
+  const paidDetail = (inv: Invoice) => `Already paid. Transaction ${inv.txid}`;
 
   // wallet keys + the addresses the server accepts coins from (receive/change 0..19)
   const paths = manager.getSessionPaths();

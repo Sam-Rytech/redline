@@ -283,7 +283,7 @@ describe("payProPass against the real server app", () => {
     expect(binToHex(signCalls[0]!.transaction.inputs[0]!.outpointTransactionHash)).toBe("01".repeat(32));
   });
 
-  it("lost submit response + failed check → network; the retry answers Already paid ✓ without signing or broadcasting again", async () => {
+  it("lost submit response + failed check → network; the retry answers Already paid without signing or broadcasting again", async () => {
     const s = setup();
     s.coin(1, ["receive", 2], 100_000);
     const storage = memoryStorage();
@@ -297,7 +297,7 @@ describe("payProPass against the real server app", () => {
     const details: string[] = [];
     const inv = await payProPass({ manager, fetch: s.fetch, storage, onStep: (st, d) => details.push(`${st}:${d ?? ""}`) });
     expect(inv.status).toBe("paid");
-    expect(details.some((d) => d.includes("Already paid ✓"))).toBe(true);
+    expect(details.some((d) => d.includes("Already paid"))).toBe(true);
     expect(signCalls).toHaveLength(1);
     expect(s.fake.broadcasts).toHaveLength(1); // the server's one broadcast of the wallet's tx
     expect(s.fake.txs.size).toBe(1); // only the one payment tx exists
@@ -433,6 +433,6 @@ describe("payProPass against the real server app", () => {
     s.setFail(null);
     const e = await payError(payProPass({ manager: fakeManager(wallet, s.fake).manager, fetch: s.fetch, storage: memoryStorage() }));
     expect(e.code).toBe("already_paid");
-    expect(e.message).toContain("Already paid ✓");
+    expect(e.message).toContain("Already paid");
   });
 });

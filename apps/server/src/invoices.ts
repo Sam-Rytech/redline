@@ -312,7 +312,7 @@ export function createInvoices(deps: InvoiceDeps) {
         }
         if (state === "paid") {
           const paid = fresh(r.id);
-          return err(409, "already_paid", `Already paid ✓ invoice ${paid.id}, txid ${paid.txid}. Your Pro pass is active.`, { invoiceId: paid.id });
+          return err(409, "already_paid", `Already paid: invoice ${paid.id}, txid ${paid.txid}. Your Pro pass is active.`, { invoiceId: paid.id });
         }
         if (state === "unspent" && isOpen(r)) {
           return err(409, "invoice_open", `Invoice ${r.id} is still open with other coins; pay that one (or wait until it expires).`, { invoiceId: r.id });

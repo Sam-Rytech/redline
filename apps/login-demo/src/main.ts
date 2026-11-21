@@ -306,10 +306,10 @@ ui.buy.addEventListener("click", async () => {
   } catch (e) {
     if (e instanceof PaymentError && e.code === "already_paid") {
       // the server found an earlier payment: that is a success
-      log(`Already paid ✓ — ${e.message}`);
+      log(`Already paid. ${e.message}`);
       ui.payResult.hidden = false;
       ui.payTxid.textContent = /txid ([0-9a-f]{64})/.exec(e.message)?.[1] ?? "(see log)";
-      ui.payLink.textContent = "Already paid ✓";
+      ui.payLink.textContent = "Already paid.";
     } else {
       log(ctrl.signal.aborted ? "Payment cancelled (wallet disconnected)" : `payment failed: ${describe(e)}`);
     }

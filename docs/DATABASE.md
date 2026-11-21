@@ -137,6 +137,7 @@ CREATE TABLE loan_snapshots (
 | `watches.missed_reads` added | "loan gone" needs 3 consecutive misses |
 | `alerts_sent.band`, `arming`, unique key | alerts cannot repeat after a restart |
 | `invoices.txid` unique | one payment cannot activate two invoices |
+| Migration `0002_invoice_payment.sql` adds `invoices.merchant_locking_hex`, `expires_at` and `abandoned` | the script an invoice was priced to pay is fixed at creation; unpaid invoices expire after 30 minutes; an expired invoice whose coins were spent elsewhere with no payment found is marked abandoned (status stays `expired`) and never checked again |
 
 ## Retention
 

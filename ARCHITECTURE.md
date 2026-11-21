@@ -181,12 +181,11 @@ POST /invoices            GET /invoices/:id      POST /invoices/:id/submit {sign
 ```
 
 **Subscription (the mainnet transaction)**
-- Plan: **30-day Pro pass** (one-time payment, no auto-renew) = 0.25 PUSD **or** equivalent BCH (BCH first, so judges without PUSD can pay).
-- `POST /invoices` → `{id, amount, merchantAddress, opReturn: "PWINV"|id}`; server **persists the chosen inputs** with the invoice.
-- Client builds: user inputs → merchant output + OP_RETURN invoice id + change; `signTransaction({broadcast: true})`.
-- Server confirms by fetching the tx (mempool is fine), checking amount/recipient/invoice id, then activates Pro.
-- Exactly-once: a retry **reuses the same inputs**, so a second payment is a double-spend the network rejects; before retrying, check whether those inputs are already spent and show "Already paid ✓ txid…".
-- PUSD payment (stretch, same day if time): token input + BCH fee input; token output to merchant's token-aware `bitcoincash:z…` address; token change back.
+- Plan: **30-day Pro pass** (one-time payment, no auto-renew) = 0.25 USD worth of BCH at the on-chain price. PUSD payment is a stretch.
+- `GET /invoices/quote` gives the amount; `POST /invoices` fixes it and **persists the chosen inputs**, which the server checks on chain (the signed-in wallet's own receive or change address 0 to 19, token-free, unspent).
+- Client builds: those inputs → merchant output + OP_RETURN invoice id + change; `signTransaction({broadcast: true})`.
+- Server broadcasts it too, confirms the network knows it, checks amount, recipient and invoice id, then marks it paid and extends Pro in one database transaction. The receipt with the terms goes to the linked Telegram chat.
+- Exactly-once: a retry **reuses the same inputs**, so a second payment is a double-spend the network rejects; the server finds an earlier payment on chain and answers "Already paid". Full rules in `docs/API.md` "Pro pass payment".
 
 **Free vs Pro:** Free = sign in, see your loans, 1 watch, liquidation alerts only. Pro (30-day pass) = unlimited watches + all rules.
 
