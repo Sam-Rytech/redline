@@ -35,12 +35,14 @@ Evidence, labelled by strength:
 |---|---|---|
 | Liquidation takes all collateral with no warning | Paryon borrowing docs | Strong (protocol fact) |
 | Borrowers sit close to the line | Live read, 21 Nov: lowest CR loans at 118.7% to 119.6%, about 7% from liquidation at $190.50 | Strong |
-| 53 loans hold 352.8 BCH (about $67k) at zero debt | Live read, 21 Nov | Strong that it exists. Not verified: whether owners can claim it, or already know |
+| 53 loans hold 352.8 BCH (about $67k) at zero debt | Live read, 21 Nov | Strong that it exists |
+| The owner can claim stranded BCH | The manage contract closes a loan with zero debt and zero redemption when its loan key is presented, releasing the collateral. Three owners did so on 20 Nov (txs `22eda049...`, `5f37ad24...`, `7046c2d1...`, 9.5 BCH together) | Strong (gate GL2). Not known: whether the other 53 owners know |
 | Borrowers want alerts | None found: no complaint, no workaround observed | Thin. This is the open question. |
-| Number of liquidations that have actually happened | Not yet counted | Unknown |
+| Liquidations that have actually happened | 47 since launch, all after 30 Apr 2026: 34 in June, 13 between 10 and 14 Nov. 299.4 BCH of collateral taken against 58,190 PUSD of debt (chain read, 21 Nov: the history of the liquidate function contract `bitcoincash:p06pkzj5w6jp5nf2836c7p7hj4curhy6t9nn6daj7zy7h5ana0w8uqt0f48ta`). stats.paryonusd.com's per-epoch totals give 56,065 PUSD for the same epochs | Strong (gate GL1) |
 
-Honest classification (see the review): today the alert idea is a plausible problem with
-unproven push. Stranded collateral is the best-evidenced piece.
+Honest classification (see the review): the alert idea now has a measured cost (47 liquidations,
+13 of them in the week before this build) but still no borrower in their own words asking for
+alerts. Stranded collateral is the best-evidenced piece, and it is claimable.
 
 How might we help a borrower find out about a danger to, or money owed on, their loan before
 it costs them?
@@ -132,8 +134,9 @@ or SMS alerts, any custody of keys or funds.
 
 ## 8. Open questions
 
-1. How many liquidations have happened since 30 Apr 2026?
-2. Are the 53 stranded loans claimable by their owners, and do the owners know?
+1. Answered 21 Nov (GL1): 47 liquidations since 30 Apr 2026, 13 of them on 10 to 14 Nov.
+2. Answered 21 Nov (GL2): yes, the loan key holder claims by closing the loan in the Paryon app;
+   three owners did on 20 Nov. Whether the other 53 owners know is still open.
 3. Answered 21 Nov: it did not. `app.paryonusd.com` returns 404; the dApp is
    `https://paryonusd.com/app` (the "Go to dApp" link on stats.paryonusd.com). It has no
    per-loan URLs, so links go to the app itself.

@@ -35,8 +35,8 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 |---|---|---|---|---|---|---|
 | G0 | Accounts & funds | Sam | Fri 16:00 | Repo ✅; jadonamite accepted invite; BUIDL draft on DoraHacks; Paytaca + Selene each ~$0.50 BCH; bot token | Ask in BLAZE Telegram for a few cents | 🟨 |
 | G-API | Front end unblocked | Claude | Fri 17:00 | `api-types` + mock server on `main`; jadonamite can `pnpm dev` the web app against it | — | ✅ |
-| GL1 | Liquidations counted | Claude | before alert-engine work | Count of Paryon liquidations since 30 Apr 2026 from open chain data, written into `docs/PRD.md` section 2 | If zero and GL2 fails, apply the fail condition in the PRD | ⬜ |
-| GL2 | Stranded BCH claimable | Claude | before landing-page copy | Confirm from the Paryon contract docs and one real loan that the owner (loan key holder) can withdraw leftover collateral | Show it as information only; drop the claim link | ⬜ |
+| GL1 | Liquidations counted | Claude | before alert-engine work | Count of Paryon liquidations since 30 Apr 2026 from open chain data, written into `docs/PRD.md` section 2 | If zero and GL2 fails, apply the fail condition in the PRD | ✅ 47 |
+| GL2 | Stranded BCH claimable | Claude | before landing-page copy | Confirm from the Paryon contract docs and one real loan that the owner (loan key holder) can withdraw leftover collateral | Show it as information only; drop the claim link | ✅ |
 | G2 | Loan decode matches | Claude | Fri 23:00 | For 5 live loans, decoded debt, collateral BCH, rate, liq price equal stats.paryonusd.com | Fix units/endianness; Sat 10:00 ask in Paryon Telegram | ✅ |
 | G1 | `broadcast:false` behaviour known | Sam | Sat 11:00 | Know for Paytaca and Selene whether the login tx is broadcast | Already covered by fallback — just document it | ⬜ |
 | G3 | Sign-in works end to end | Sam + Claude | Sat 14:00 | Same wallet on laptop and phone → same account; reused/expired nonce rejected | Ship "Watch any loan" without sign-in; keep going | ⬜ |

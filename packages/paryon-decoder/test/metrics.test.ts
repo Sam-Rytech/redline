@@ -79,6 +79,18 @@ describe("computeLoanViews", () => {
     expect(r!.pendingRateChange).toBe(true);
     expect(r!.stranded).toBe(false);
   });
+
+  it("gives stranded loans a claim link to the Paryon app, and no other loan one", () => {
+    const [s, active] = computeLoanViews(
+      [
+        { ...base, id: "s", debtPusd: 0, collateralSats: 5_000_000 },
+        { ...base, id: "a" },
+      ],
+      700,
+    );
+    expect(s!.claimUrl).toBe("https://paryonusd.com/app");
+    expect(active!.claimUrl).toBeNull();
+  });
 });
 
 describe("summarize", () => {

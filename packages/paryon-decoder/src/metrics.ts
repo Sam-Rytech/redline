@@ -66,6 +66,8 @@ export function computeLoanViews(raw: RawLoan[], priceUsd: number): LoanView[] {
       amountBeingRedeemedPusd: l.amountBeingRedeemedPusd,
       stranded: !hasDebt && l.collateralSats > DUST_SATS,
       paryonUrl: PARYON_APP_URL,
+      // the owner releases leftover BCH by closing the loan with its loan key in the Paryon app (gate GL2)
+      claimUrl: !hasDebt && l.collateralSats > DUST_SATS ? PARYON_APP_URL : null,
     };
   });
 }
