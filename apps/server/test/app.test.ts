@@ -6,9 +6,9 @@ import type { ChainReader, LoanState } from "../src/reader.js";
 
 const views = computeLoanViews(
   [
-    { id: "b", status: "mature", debtPusd: 1800, collateralSats: 10e8, interestRatePct: 1, nextInterestRatePct: 1, amountBeingRedeemedPusd: 0 },
-    { id: "a", status: "new", debtPusd: 1000, collateralSats: 10e8, interestRatePct: 1, nextInterestRatePct: 1, amountBeingRedeemedPusd: 0 },
-    { id: "s", status: "mature", debtPusd: 0, collateralSats: 5e8, interestRatePct: 1, nextInterestRatePct: 1, amountBeingRedeemedPusd: 0 },
+    { id: "b", status: "mature", debtPusd: 1800, collateralSats: 10e8, rateRaw: 274, nextRateRaw: 274, amountBeingRedeemedPusd: 0 },
+    { id: "a", status: "new", debtPusd: 1000, collateralSats: 10e8, rateRaw: 274, nextRateRaw: 274, amountBeingRedeemedPusd: 0 },
+    { id: "s", status: "mature", debtPusd: 0, collateralSats: 5e8, rateRaw: 274, nextRateRaw: 274, amountBeingRedeemedPusd: 0 },
   ],
   200,
 );
@@ -54,6 +54,8 @@ describe("server app", () => {
     expect(body.loans.map((l) => l.id)).toEqual(["b", "a", "s"]);
     expect(body.summary).toMatchObject({
       total: 3,
+      activeCount: 2,
+      activeCollateralBch: 20,
       within20pct: 1,
       totalDebtPusd: 2800,
       totalCollateralBch: 25,

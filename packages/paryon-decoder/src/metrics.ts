@@ -5,6 +5,7 @@ import {
   type LoansSummary,
   type RiskBand,
 } from "@redline/api-types";
+import { rawRateToAnnualPct } from "./commitment.js";
 
 export const LIQUIDATION_CR = 1.1;
 export const SMALL_LOAN_PUSD = 100;
@@ -15,8 +16,9 @@ export interface RawLoan {
   status: LoanStatus;
   debtPusd: number;
   collateralSats: number;
-  interestRatePct: number;
-  nextInterestRatePct: number;
+  /** On-chain interest rate (per 10,000,000 per period). Comparisons use this, never the rounded percentage. */
+  rateRaw: number;
+  nextRateRaw: number;
   amountBeingRedeemedPusd: number;
 }
 
@@ -32,7 +34,7 @@ function debtAhead(me: RawLoan, all: RawLoan[]): number {
   let sum = 0;
   for (const l of all) {
     if (l.id === me.id || l.debtPusd <= 0) continue;
-    if (l.interestRatePct < me.interestRatePct || l.debtPusd < SMALL_LOAN_PUSD) {
+    if (l.rateRaw < me.rateRaw || l.debtPusd < SMALL_LOAN_PUSD) {
       sum += l.debtPusd;
     }
   }
@@ -52,9 +54,9 @@ export function computeLoanViews(raw: RawLoan[], priceUsd: number): LoanView[] {
       debtPusd: l.debtPusd,
       collateralSats: l.collateralSats,
       collateralBch,
-      interestRatePct: l.interestRatePct,
-      nextInterestRatePct: l.nextInterestRatePct,
-      pendingRateChange: l.nextInterestRatePct !== l.interestRatePct,
+      interestRatePct: rawRateToAnnualPct(l.rateRaw),
+      nextInterestRatePct: rawRateToAnnualPct(l.nextRateRaw),
+      pendingRateChange: l.nextRateRaw !== l.rateRaw,
       collateralRatioPct: crPct,
       liquidationPriceUsd: liq,
       distanceToLiquidation: distance,
@@ -70,8 +72,11 @@ export function computeLoanViews(raw: RawLoan[], priceUsd: number): LoanView[] {
 
 export function summarize(loans: LoanView[]): LoansSummary {
   const stranded = loans.filter((l) => l.stranded);
+  const active = loans.filter((l) => l.debtPusd > 0);
   return {
     total: loans.length,
+    activeCount: active.length,
+    activeCollateralBch: active.reduce((a, l) => a + l.collateralBch, 0),
     within20pct: loans.filter((l) => l.distanceToLiquidation !== null && l.distanceToLiquidation < 0.2).length,
     totalCollateralBch: loans.reduce((a, l) => a + l.collateralBch, 0),
     totalDebtPusd: loans.reduce((a, l) => a + l.debtPusd, 0),

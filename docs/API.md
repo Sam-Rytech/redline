@@ -31,6 +31,8 @@ Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s. Only `GET /a
 ## Endpoints
 
 Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with debt 0 that still hold collateral (fully redeemed, unclaimed) and their total collateral in BCH.
+`summary.total` counts every loan output, stranded ones included. For the "N active loans" and "Total Collateral" figures that stats.paryonusd.com shows, use `summary.activeCount` and `summary.activeCollateralBch` (loans with debt above 0).
+`LoanView.paryonUrl` is `https://paryonusd.com/app` for every loan; the Paryon dApp has no per-loan links.
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|

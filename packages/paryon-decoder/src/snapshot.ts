@@ -1,6 +1,6 @@
 import type { RawLoan } from "./metrics.js";
 import { MAINNET_V1 } from "./deployment.js";
-import { decodeLoanCommitment, decodePriceCommitment, rawRateToAnnualPct } from "./commitment.js";
+import { decodeLoanCommitment, decodePriceCommitment } from "./commitment.js";
 
 export interface ChainUtxo {
   txid: string;
@@ -60,8 +60,8 @@ export function buildSnapshot(input: {
       status: d.status,
       debtPusd: d.borrowedCents / 100,
       collateralSats: u.satoshis,
-      interestRatePct: rawRateToAnnualPct(d.currentRateRaw),
-      nextInterestRatePct: rawRateToAnnualPct(d.nextRateRaw),
+      rateRaw: d.currentRateRaw,
+      nextRateRaw: d.nextRateRaw,
       amountBeingRedeemedPusd: d.redeemingCents / 100,
     });
   }

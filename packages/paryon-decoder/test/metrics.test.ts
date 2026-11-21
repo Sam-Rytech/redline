@@ -6,8 +6,8 @@ const base: RawLoan = {
   status: "mature",
   debtPusd: 1000,
   collateralSats: 2_00000000, // 2 BCH
-  interestRatePct: 1,
-  nextInterestRatePct: 1,
+  rateRaw: 274, // 1.00 % a year
+  nextRateRaw: 274,
   amountBeingRedeemedPusd: 0,
 };
 
@@ -36,19 +36,39 @@ describe("computeLoanViews", () => {
 
   it("sums debt ahead from lower-rate loans and small loans, excluding self", () => {
     const loans: RawLoan[] = [
-      { ...base, id: "me", interestRatePct: 2, debtPusd: 1000 },
-      { ...base, id: "low", interestRatePct: 1, debtPusd: 500 },
-      { ...base, id: "high", interestRatePct: 3, debtPusd: 700 },
-      { ...base, id: "small", interestRatePct: 5, debtPusd: 50 },
+      { ...base, id: "me", rateRaw: 548, debtPusd: 1000 },
+      { ...base, id: "low", rateRaw: 274, debtPusd: 500 },
+      { ...base, id: "high", rateRaw: 822, debtPusd: 700 },
+      { ...base, id: "small", rateRaw: 1370, debtPusd: 50 },
     ];
     const me = computeLoanViews(loans, 700).find((l) => l.id === "me")!;
     expect(me.debtAheadPusd).toBe(550);
   });
 
+  it("orders the redemption queue by the raw on-chain rate, not the rounded percentage", () => {
+    // 1958 and 1960 both display as 7.15 % but are different rates on chain.
+    const loans: RawLoan[] = [
+      { ...base, id: "me", rateRaw: 1960, debtPusd: 1000 },
+      { ...base, id: "lower", rateRaw: 1958, debtPusd: 400 },
+      { ...base, id: "same", rateRaw: 1960, debtPusd: 300 },
+    ];
+    const views = computeLoanViews(loans, 700);
+    const me = views.find((l) => l.id === "me")!;
+    expect(me.interestRatePct).toBe(7.15);
+    expect(views.find((l) => l.id === "lower")!.interestRatePct).toBe(7.15);
+    expect(me.debtAheadPusd).toBe(400);
+  });
+
+  it("flags a pending rate change from the raw rates even when the rounded values match", () => {
+    const [v] = computeLoanViews([{ ...base, rateRaw: 1960, nextRateRaw: 1958 }], 700);
+    expect(v!.interestRatePct).toBe(v!.nextInterestRatePct);
+    expect(v!.pendingRateChange).toBe(true);
+  });
+
   it("flags stranded, redeeming and pending rate change", () => {
     const loans: RawLoan[] = [
       { ...base, id: "s", debtPusd: 0, collateralSats: 5_000_000 },
-      { ...base, id: "r", amountBeingRedeemedPusd: 200, nextInterestRatePct: 2 },
+      { ...base, id: "r", amountBeingRedeemedPusd: 200, nextRateRaw: 548 },
     ];
     const [s, r] = computeLoanViews(loans, 700);
     expect(s!.stranded).toBe(true);
@@ -74,6 +94,8 @@ describe("summarize", () => {
     );
     expect(summarize(views)).toEqual({
       total: 3,
+      activeCount: 2,
+      activeCollateralBch: 1 + 0.55,
       within20pct: 1,
       totalCollateralBch: 1 + 0.55 + 3,
       totalDebtPusd: 200,
