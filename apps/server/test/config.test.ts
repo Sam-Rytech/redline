@@ -17,6 +17,7 @@ describe("parseConfig", () => {
       publicOrigin: "http://localhost:5173",
       trustProxyHops: 0,
       logXff: false,
+      telegramBotToken: undefined,
       production: false,
     });
     expect(c.sessionSecret.length).toBeGreaterThanOrEqual(32);
@@ -50,6 +51,9 @@ describe("parseConfig", () => {
     expect(parseConfig({ ...prod, SESSION_SECRET: SECRET })).toMatchObject({
       production: true, publicOrigin: "https://redline.example", warnings: [],
     });
+  });
+  it("reads the Telegram bot token", () => {
+    expect(parseConfig({ TELEGRAM_BOT_TOKEN: "123:abc" }).telegramBotToken).toBe("123:abc");
   });
   it("reads the sign-in settings", () => {
     expect(

@@ -13,6 +13,7 @@ import {
   type LoanView,
   type MeResponse,
   type OkResponse,
+  type TelegramLinkResponse,
   type VerifyRequest,
   type WatchRules,
 } from "@redline/api-types";
@@ -41,6 +42,7 @@ import {
   type AccountRow,
 } from "./db/auth.js";
 import type { Db } from "./db/open.js";
+import { insertLinkToken, unlinkAccount } from "./db/telegram.js";
 import {
   DEFAULT_RULES,
   countWatches,
@@ -76,6 +78,8 @@ export const LIMITS = { auth: 10, utxos: 30 } as const;
 export const MAX_UTXO_ADDRESSES = 40;
 const WALLET_ADDRESS_COUNT = 20;
 const WALLET_CACHE_MS = 60_000;
+/** Telegram link tokens: single use, 10 minutes, 128 bits (docs/SECURITY.md) */
+export const LINK_TOKEN_SECONDS = 10 * 60;
 
 const isToken = (t: string | undefined): t is string => typeof t === "string" && /^[0-9a-f]{64}$/.test(t);
 const MAX_LOAN_ID_LENGTH = 128;
@@ -102,6 +106,8 @@ export interface AppDeps {
   secrets: Secrets;
   config: Pick<ServerConfig, "loginDomain" | "publicOrigin" | "trustProxyHops"> & Partial<Pick<ServerConfig, "logXff">>;
   now?: () => Date;
+  /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
+  botUsername?: () => string | undefined;
 }
 
 export function createApp(deps: AppDeps) {
@@ -478,6 +484,31 @@ export function createApp(deps: AppDeps) {
     const s = signedIn(c);
     if (!s) return unauthorized(c);
     if (!deleteWatch(db, s.account.id, c.req.param("id"))) return c.json(err("not_found", "No such watch"), 404);
+    return c.json({ ok: true } satisfies OkResponse);
+  });
+
+  // ---------- Telegram linking ----------
+  app.post("/telegram/link-token", (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    const username = deps.botUsername?.();
+    if (!username) return c.json(err("telegram_unavailable", "Telegram alerts are not available right now"), 503);
+    // 16 random bytes as base64url: within Telegram's start-payload alphabet [A-Za-z0-9_-]
+    const token = randomBytes(16).toString("base64url");
+    const expiresAt = nowSec() + LINK_TOKEN_SECONDS;
+    insertLinkToken(db, sha256Hex(token), s.account.id, expiresAt);
+    const body: TelegramLinkResponse = {
+      token,
+      url: `https://t.me/${username}?start=${token}`,
+      expiresAt: new Date(expiresAt * 1000).toISOString(),
+    };
+    return c.json(body);
+  });
+
+  app.post("/telegram/unlink", (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    unlinkAccount(db, s.account.id);
     return c.json({ ok: true } satisfies OkResponse);
   });
 
