@@ -101,13 +101,17 @@ They are not needed for alerts.
 
 A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
 
-- A refresh that returns fewer than 80% of the previous loans is discarded.
+- A refresh that returns fewer than 80% of the previous loans is discarded, and so is an empty
+  first read or a read from a server behind the last good block.
 - A loan is "gone" only after 3 consecutive successful reads without it. Loans with a
   missing sidecar are counted and reported in `/api/health`, never silently dropped.
 - `/api/loans` includes `stale: true` when data is older than 5 minutes, and alerts are not
   sent from stale data.
-- Alert sends are idempotent: a unique key of watch, rule and band prevents duplicates after
-  a restart.
+- Alert sends are idempotent: before sending, the alert is recorded in `alerts_sent` (unique key
+  of watch, rule, band and arming) together with the watch's new band, in one transaction. A
+  restart cannot send it again. A temporary Telegram failure (rate limit, server error, network,
+  a rejected bot token) undoes the record so the next refresh retries; a blocked bot or a deleted
+  chat unlinks the chat. At most 20 alerts per refresh, most severe first.
 
 ## Abuse and availability
 
@@ -128,8 +132,8 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
   lists every variable the code reads and nothing else.
 - Variables: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`,
   `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`, `BACKUP_DIR`, `TRUST_PROXY_HOPS`,
-  `LOG_XFF`. Read today: all except `TELEGRAM_BOT_TOKEN` and `MERCHANT_ADDRESS`, which arrive
-  with the code that reads them. `SESSION_SECRET` (at least 32 characters) and `PUBLIC_ORIGIN`
+  `LOG_XFF`. Read today: all except `MERCHANT_ADDRESS`, which arrives with the code that
+  reads it. `SESSION_SECRET` (at least 32 characters) and `PUBLIC_ORIGIN`
   are required in production. `apps/server/.env.example` lists exactly the ones read.
 
 ## Privacy and deletion

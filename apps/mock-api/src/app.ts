@@ -208,6 +208,10 @@ export function createApp() {
     };
     return c.json(body);
   });
+  app.post("/telegram/unlink", (c) => {
+    state.telegramLinked = false;
+    return c.json({ ok: true });
+  });
   app.get("/mock/telegram-linked", (c) => {
     state.telegramLinked = true;
     return c.json(me(state));
