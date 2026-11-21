@@ -42,6 +42,14 @@ export function createApp() {
 
   const authed = (c: Context) => state.signedIn && getCookie(c, SESSION_COOKIE) === SESSION_VALUE;
 
+  // same as the real server: every POST/PATCH must declare JSON (415 before anything else)
+  app.use("*", async (c, next) => {
+    if (c.req.method !== "POST" && c.req.method !== "PATCH") return next();
+    const type = c.req.header("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (type !== "application/json") return c.json(err("bad_content_type", "Send Content-Type: application/json"), 415);
+    await next();
+  });
+
   app.use("*", async (c, next) => {
     const p = c.req.path;
     const guarded = PROTECTED.some((x) => p === x || p.startsWith(x + "/"));
@@ -154,6 +162,10 @@ export function createApp() {
     };
     return c.json(body);
   });
+  app.post("/telegram/unlink", (c) => {
+    state.telegramLinked = false;
+    return c.json({ ok: true });
+  });
   app.get("/mock/telegram-linked", (c) => {
     state.telegramLinked = true;
     return c.json(me(state));
@@ -176,14 +188,14 @@ export function createApp() {
     if (body.asset !== "BCH") return c.json(err("bad_request", "asset must be BCH"), 400);
     if (!Array.isArray(body.inputs) || body.inputs.length === 0)
       return c.json(err("bad_request", "inputs must be a non-empty array"), 400);
-    const id = randHex(8);
+    const id = randHex(16);
     const inv: Invoice = {
       id,
       status: "open",
       asset: "BCH",
       amountSats: proPassSats(),
       merchantAddress: MERCHANT_ADDRESS,
-      opReturnHex: toHex("PWINV") + id,
+      opReturnHex: "05" + toHex("PWINV") + "10" + id, // same format as the real server
       inputs: body.inputs,
       txid: null,
       createdAt: new Date().toISOString(),

@@ -6,8 +6,6 @@
 **Deadline:** Sun 22 Nov 2026, 14:00 UTC (15:00 Lagos). Internal freeze: Sun 11:00 Lagos.
 **One-liner:** A smoke alarm for ParyonUSD loans. Sign in with your BCH wallet (no password), see your loans' risk, get Telegram alerts before you lose money.
 
-Related documents (all in `docs/`): `PRD.md` (what and why), `SECURITY.md`, `DATABASE.md`, `API.md`, `DESIGN.md`, `BRAND.md`, `COMPLIANCE.md`, `PRACTICES.md`. Where `SECURITY.md` or `DATABASE.md` differ from this file, they win; the differences are listed in `DATABASE.md`.
-
 Items marked **⚠ VERIFY** are not yet confirmed and each has a gate in `PROGRESS.md`. Do not build on top of them until the gate passes.
 
 ---
@@ -70,30 +68,32 @@ Repo (pnpm workspaces):
 **Protocol (v1)**
 
 1. Client connects via WizardConnect → receives xpubs (`receive`, `change`; `defi` = index 7 if present).
-2. Client derives receive/change addresses (indices 0–19 each), asks the server for UTXOs, picks the **smallest pure-BCH UTXO ≥ 2,000 sats** (no tokens).
-3. `POST /auth/challenge {xpubReceive, outpoint, path:[pathName, index]}` → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, browser_id}`, sets an HttpOnly `rl_ch` cookie holding `browser_id`, and returns the nonce, expiry and domain. `/auth/verify` must carry the same cookie, so a challenge answered from another browser is rejected (relay attack, see `SECURITY.md`).
-4. Client builds the login transaction (CashScript `TransactionBuilder`, placeholder P2PKH unlocker):
+2. Client derives **receive** addresses (indices 0–19), asks the server for UTXOs, picks the **smallest pure-BCH (token-free) UTXO ≥ 2,000 sats** on the receive path. Sign-in must prove control of the receive xpub, because `accountId` is derived from it; change-path UTXOs are refused (`bad_path`).
+3. `POST /auth/challenge {xpubReceive, xpubChange, outpoint, path:["receive", index]}` (mainnet xpubs, receive ≠ change) → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, sha256(binding token)}`, returns `{nonce, expiry, domain}` and sets the binding token as cookie `rl_chal` (HttpOnly, SameSite=Lax, Path=/api/auth, Max-Age=300, Secure). This binds the challenge to the requesting browser, so a login tx that leaks (e.g. a wallet broadcasts it and a mempool watcher copies it) cannot be redeemed by anyone else.
+4. Client builds the login transaction (`buildUnsignedLoginTx`, libauth):
    - Input 0: the chosen UTXO
    - Output 0: `OP_RETURN` → `"WZL1"` | domain (utf-8) | nonce (16 B) | expiry (uint32 LE)
-   - Output 1: P2PKH back to **the same address**, value = input − fee (fee ≈ 1 sat/byte, ~250–300 sats)
-5. Client calls `signTransaction({ transaction, sourceOutputs, broadcast: false, userPrompt: "Sign in to Redline — this will NOT be sent" }, inputPaths=[[0, pathName, index]])`.
-6. `POST /auth/verify {signedTxHex}`. Server checks, in order:
-   1. Decodes tx; exactly 1 input = challenge outpoint; outputs match the template above.
-   2. OP_RETURN domain == our domain, nonce == stored nonce, not expired, nonce unused.
-   3. **Fetches the source output itself from Electrum** (never trusts client `sourceOutputs`).
-   4. Address of that output == address derived from `xpubReceive`/`change` at the stated path.
-   5. libauth VM `verify` of the full transaction against the fetched source output passes (proves the signature).
+   - Output 1: P2PKH back to **the same address**, value = input − fee (client uses 400 sats; server accepts 200–2,000)
+   - version 2, locktime 0, sequence 0xffffffff, no tokens anywhere; the signature must be **SIGHASH_ALL|FORKID (0x41)** so it commits to the nonce output
+5. Client calls `signTransaction({ transaction, sourceOutputs, broadcast: false, userPrompt: "Sign in to Redline — this will NOT be sent" }, inputPaths=[[0, "receive", index]])`.
+6. `POST /auth/verify {signedTxHex}` (with the `rl_chal` cookie). Server checks, in order:
+   1. Decodes tx; exactly 1 input = challenge outpoint; outputs, version, locktime, sequence match the template above.
+   2. OP_RETURN domain == our domain, nonce known, the browser's `rl_chal` hashes to the stored binding (`challenge_not_bound`), not expired, nonce unused.
+   3. **Fetches the source output itself from Electrum** (never trusts client `sourceOutputs`); it must carry no tokens (`token_source`) and hold ≥ 2,000 sats.
+   4. Address of that output == P2PKH derived from **`xpubReceive`** at the stated index; output 1 pays back to it; fee 200–2,000.
+   5. Unlocking bytecode is exactly `<sig> <pubkey>` with the derived pubkey and a Schnorr or DER signature ending in 0x41; then the libauth VM `verify` of the full transaction against the fetched source output passes.
    6. Outpoint is unspent **or** spent by exactly this txid (covers wallets that broadcast anyway).
 7. Server marks nonce used, sets `accountId = sha256(xpubReceive)`, issues an HttpOnly session cookie (7 days).
 
-**Properties:** no password/email; replay-proof (single-use nonce + expiry); bound to our domain; worst case if broadcast = the user loses ~300 sats of fee, coins return to them.
+**Properties:** no password/email; replay-proof (single-use nonce + expiry); bound to our domain and to the requesting browser; worst case if broadcast = the user loses ~300 sats of fee, coins return to them.
 
 **Fallback mode** (if a wallet ignores `broadcast:false`): same flow, the tx is simply on-chain; check 6 still passes. Show "this wallet sends a tiny self-payment to sign in".
 
 **Public API (for other BLAZE teams):**
 ```ts
-// client
-const session = await wizardLogin({ manager /* DappConnectionManager */, apiBase, domain });
+// client (@redline/wizard-login/client): domain comes from the server's challenge
+const conn = connectWallet();  await conn.ready;   // QR: conn.qrUri
+const me = await wizardLogin({ manager: conn.manager, apiBase: "/api" });
 // server (framework-agnostic)
 createChallenge(input) -> Challenge
 verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -> { accountId }
@@ -107,7 +107,7 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 - Oracle pubkey = General Protocols oracle (oracles.cash)
 
 **Finding all loans**
-- `Loan.cash` has an **empty constructor** → every loan uses identical bytecode → one P2SH address. Compute it from `@paryonusd/contracts@1.1.0` artifact (`paryonArtifacts`) with CashScript `Contract` (no args, P2SH32). ⚠ VERIFY the address against a known loan tx.
+- `Loan.cash` has an **empty constructor** → every loan uses identical bytecode → one P2SH address. Compute it from `@paryonusd/contracts@1.1.0` artifact (`paryonArtifacts`) with CashScript `Contract` (no args, P2SH32). ✅ Verified: `bitcoincash:pv8zrfxplp50apvppy5ku5mjp3gqgkp94dvwf82lg0st4ptk5agfyrtpjvf8a` (194 loan UTXOs on 20 Nov 2026).
 - Fulcrum `blockchain.address.listunspent` (with token data) on that address → all loan UTXOs (~160).
 - Keep UTXOs whose token `category == paryonTokenId`, NFT capability `mutable`, commitment length **27**, first byte `0x01`.
 
@@ -126,14 +126,14 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 | 23 | 2 | minRateManager |
 | 25 | 2 | maxRateManager |
 
-⚠ VERIFY: byte order (assume little-endian, CashScript convention), PUSD decimals (assume 2 — check BCMR), rate units (0.05% steps up to 119.6% ⇒ likely basis points), and that **collateral = the loan UTXO's satoshi value**. Gate: decoded values for 5 loans must equal stats.paryonusd.com exactly.
+✅ Verified (G2, 20 Nov 2026 — totals and 6 loans match stats.paryonusd.com): fields are **little-endian**; PUSD has **2 decimals**; **collateral = the loan UTXO's satoshi value** (the liquidate contract uses `tx.inputs[1].value`); interest rates are **per 10,000,000 per period** (period = 144 blocks ≈ 1 day), so annual % = `raw × 365 / 100000` (max raw 32767 ⇒ 119.6 %).
 
 **Loan ↔ loan key**
-- The loan's sidecar is the next output of the same tx (`vout+1`); it holds an immutable NFT whose **category = loanTokenId**. Fetch the raw tx (`blockchain.transaction.get`) and read output `vout+1`.
+- The loan's sidecar is the next output of the same tx (`vout+1`); it holds an immutable NFT whose **category = loanTokenId**. ✅ Verified: sidecars sit at the LoanSidecar contract address (`bitcoincash:pdugdfdd9p84460sntu8rhmj75g8k7uaee699wzj5489l3n99h7s7f49drdgu`), so one `listunspent` on it maps every loan — no per-loan tx fetch.
 - The user's **loan key** = a *minting* NFT of category `loanTokenId` in their wallet.
 
 **Price**
-- Primary: on-chain price contract UTXO (commitment `0x00 | sequence (4) | pricedata (4)`). Note the migration `PriceContract` → `PriceContractGuarded`. ⚠ VERIFY current address and price units.
+- Primary: on-chain price contract UTXO (commitment `0x00 | sequence (4) | pricedata (4)`). Note the migration `PriceContract` → `PriceContractGuarded`. ✅ Verified: current price UTXO is at the **PriceContractGuarded** address (`bitcoincash:pdws0e456rwhzuxahv5jduryn493prvjrmu6ksegq052m5g048jp2tl4l6chh`); price is **US cents per BCH**, little-endian (e.g. `0x4a54` = 19028 = $190.28). The old PriceContract address is empty.
 - Fallback: General Protocols oracle via oracles.cash (same oracle the contracts trust).
 
 **Metrics (pure functions)**
@@ -143,11 +143,11 @@ verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -
 - `debtAhead = Σ debt of active loans with currentInterestRate < mine` (+ all loans with debt < 100 PUSD, which are redeemable regardless of rate)
 - `redemptionInProgress = amountBeingRedeemed > 0`
 - `pendingRateChange = nextInterestRate ≠ currentInterestRate`
-- `stranded = debt == 0 && sats > dust` ⚠ VERIFY a fully-redeemed loan stays at the loan address with leftover sats.
+- `stranded = debt == 0 && sats > dust` ✅ Verified: 54–55 debt-0 loans still sit at the loan address holding ~353 BCH (20 Nov 2026).
 
 ### 3.3 `apps/server`
 
-**Chain reader** — subscribes to block headers on Fulcrum; on each new block (~10 min): refresh all loan UTXOs + price → in-memory snapshot + `loan_snapshots` row. Also a 60 s safety poll. Integrity rules: a refresh that returns fewer than 80% of the previous loans is discarded; a loan is "gone" only after 3 consecutive successful reads without it; loans with no sidecar are counted in `/api/health`, not dropped silently; stale data (older than 5 minutes) is flagged on `/api/loans` and never used to send alerts.
+**Chain reader** — subscribes to block headers on Fulcrum; on each new block (~10 min): refresh all loan UTXOs + price → in-memory snapshot + `loan_snapshots` row. Also a 60 s safety poll.
 
 **Alert engine** — after each refresh, evaluate every watch:
 
@@ -199,8 +199,6 @@ Screens:
 
 ## 4. Data model (SQLite)
 
-Superseded by `docs/DATABASE.md` (no xpubs in `accounts`, challenge browser binding, alert idempotency, age result). The sketch below is kept for history only.
-
 ```
 accounts(id TEXT PK /*sha256(xpubReceive)*/, xpub_receive, xpub_change, created_at, pro_until)
 challenges(nonce PK, account_hint, outpoint, path, domain, expiry, used_at)
@@ -223,27 +221,31 @@ loan_snapshots(block_height, loan_token_id, debt, collateral_sats, rate, next_ra
 | Wallet connection | `@wizardconnect/dapp` + `@wizardconnect/core` | **Pin both to the same exact version** (0.2.7 at time of writing). `dapp` declares `core: "*"`, and 5 releases shipped 12–13 Nov — unpinned installs can break overnight |
 | Tx building | `cashscript` | Pin one exact version. Use `generateWcTransactionObject()` and attach `inputPaths` yourself (official docs); a preview doc mentions `generateWizardConnectTransactionObject()` — don't rely on it |
 | BCH primitives / VM verify | `@bitauth/libauth` v3 | |
-| Electrum | `@electrum-cash/network` → public Fulcrum (WSS) | ⚠ VERIFY server supports token data in `listunspent` |
+| Electrum | `@electrum-cash/network` → public Fulcrum (WSS) | ✅ Fulcrum 2.1.4 returns token data in `listunspent`. Hosts used (with fallback): bch.imaginary.cash, electrum.imaginary.cash, bch.loping.net, fulcrum.greyh.at, electroncash.dk |
 | Paryon artifacts | `@paryonusd/contracts@1.1.0` | Loan address + contract shapes |
 | Server | Hono (or Express) + `better-sqlite3` | |
 | Bot | `grammy` | Long polling, no webhook needed |
 | Front end | Vite + React + Tailwind | |
 | Hosting | Web: Vercel. Server: Railway (or any always-on VM) + persistent volume | Free tiers that sleep (Render free) **stop alerts** — don't use them |
 
-Env vars: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`, `LOGIN_DOMAIN`, `MERCHANT_ADDRESS` (token-aware `z…`), `DATABASE_PATH`. (`ELECTRUM_HOST` is what the code reads today; the price source is the on-chain oracle contract, so there is no `PRICE_SOURCE` setting.)
+Env vars: `ELECTRUM_URL`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`, `LOGIN_DOMAIN`, `MERCHANT_ADDRESS` (token-aware `z…`), `PRICE_SOURCE`.
 
 ---
 
 ## 6. Security
 
 - Server fetches every source output itself; never trusts client-supplied UTXO data.
-- Nonces: 16 random bytes, single-use, 5-minute expiry, bound to `LOGIN_DOMAIN`.
-- Session cookie: HttpOnly, Secure, SameSite=Lax; rotate on login.
+- Sign-in proves the **receive** xpub only (account id = sha256(xpubReceive)); a login never rewrites an account's receive xpub.
+- Nonces: 16 random bytes, single-use, 5-minute expiry, bound to `LOGIN_DOMAIN` and to the requesting browser (`rl_chal` HttpOnly cookie; only its hash is stored).
+- Login signatures must be SIGHASH_ALL|FORKID; NONE/SINGLE/ANYONECANPAY are refused (they would not commit to the nonce). The source UTXO must be token-free.
+- Session cookie: HttpOnly, Secure (default; `COOKIE_SECURE=false` only for plain-http non-localhost testing), SameSite=Lax; new random session per login, stored hashed.
+- CSRF: every POST must be `Content-Type: application/json` (415 otherwise); with `PUBLIC_ORIGIN` set, `Origin` must match (403). POST bodies capped at 32 KB (413).
 - Telegram link tokens: single-use, 10-minute expiry.
-- Rate-limit `/auth/*` and the UTXO proxy.
-- Keep xpubs server-side only, only inside the encrypted session row, never in `accounts`, the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
-- Web and API share one origin through Vercel rewrites, so cookies are first-party and no CORS is needed. Full rules in `docs/SECURITY.md`.
+- Rate-limit `/auth/*` and the UTXO proxy (30/min per IP). Client IP = socket address, or with `TRUST_PROXY_HOPS=N` the Nth `x-forwarded-for` entry from the right (1 = the one the nearest proxy appended; Vercel rewrite -> Railway needs the real chain checked on staging with `LOG_XFF=1` first). Legacy `TRUST_PROXY=true` = 1 hop.
+- Electrum calls time out after 15 s and the connection is closed.
+- Keep xpubs server-side only; never show them in the UI or logs. Privacy note in docs: signing in reveals one UTXO and the wallet's xpubs to the server.
 - No private keys anywhere on the server. The merchant address is receive-only.
+- Pro pass payments, accepted risks: Pro is granted on mempool acceptance (0-conf; a payer could double spend $0.25 after the fact); the server trusts its Electrum hosts for spent state, mempool and merchant history (raw txs are hash-checked, absence is not); invoice inputs must sit on the account's receive or change xpub, and the change xpub is trust-on-first-use (sign-in proves only the receive xpub). Server never trusts client amounts or UTXO data; exactly-once via pinned inputs + one DB transaction (paid + Pro extension).
 
 ---
 

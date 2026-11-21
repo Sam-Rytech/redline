@@ -74,6 +74,8 @@ describe("summarize", () => {
     );
     expect(summarize(views)).toEqual({
       total: 3,
+      activeCount: 2,
+      activeCollateralBch: 1 + 0.55,
       within20pct: 1,
       totalCollateralBch: 1 + 0.55 + 3,
       totalDebtPusd: 200,

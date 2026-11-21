@@ -24,7 +24,7 @@ const B = raw("b", 1800, 10e8);
 const S = raw("s", 0, 5e8); // stranded
 
 const NOW = new Date("2026-11-20T12:00:00.000Z");
-const mk = (fetch: () => Promise<Snapshot>, intervalMs = 1000, extra: { timeoutMs?: number; log?: (m: string) => void } = {}) =>
+const mk = (fetch: () => Promise<Snapshot>, intervalMs = 1000, extra: { timeoutMs?: number; retryMs?: number; log?: (m: string) => void } = {}) =>
   createChainReader({ fetch, intervalMs, now: () => NOW, log: () => {}, ...extra });
 
 beforeEach(() => vi.useFakeTimers());
@@ -93,11 +93,14 @@ describe("chain reader", () => {
     expect(r.lastError()).toMatch(/0 loans/);
   });
 
-  it("0 loans on the very first refresh is accepted", async () => {
+  it("0 loans on the very first refresh is a failure too (never happens on mainnet); no update fires", async () => {
     const r = mk(async () => snap([]));
+    const calls: unknown[] = [];
+    r.onUpdate((p, n) => calls.push([p, n]));
     await r.refresh();
-    expect(r.current()!.loans).toEqual([]);
-    expect(r.lastError()).toBeNull();
+    expect(r.current()).toBeNull();
+    expect(r.lastError()).toMatch(/0 loans/);
+    expect(calls).toEqual([]);
   });
 
   it("skips overlapping refreshes", async () => {
@@ -215,5 +218,94 @@ describe("chain reader", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(logs.some((l) => l.includes("async listener"))).toBe(true);
+  });
+
+  describe("quick retry after a failed refresh", () => {
+    it("retries once after retryMs, then the normal interval continues", async () => {
+      const fetch = vi.fn(async (): Promise<Snapshot> => {
+        throw new Error("down");
+      });
+      const r = mk(fetch, 60_000, { retryMs: 10_000 });
+      r.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetch).toHaveBeenCalledTimes(2); // the quick retry
+      await vi.advanceTimersByTimeAsync(40_000); // t = 50 s: the failed retry does not schedule another
+      expect(fetch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(10_000); // t = 60 s: normal tick
+      expect(fetch).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(10_000); // t = 70 s: retry after the tick's failure
+      expect(fetch).toHaveBeenCalledTimes(4);
+      r.stop();
+    });
+
+    it("defaults retryMs to 10 s", async () => {
+      const fetch = vi.fn(async (): Promise<Snapshot> => {
+        throw new Error("down");
+      });
+      const r = mk(fetch, 60_000);
+      r.start();
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      r.stop();
+    });
+
+    it("a successful retry restores state; no retry after success", async () => {
+      let fail = true;
+      const fetch = vi.fn(async () => {
+        if (fail) throw new Error("down");
+        return snap([A]);
+      });
+      const r = mk(fetch, 60_000, { retryMs: 10_000 });
+      r.start();
+      await vi.advanceTimersByTimeAsync(0);
+      fail = false;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(r.current()).not.toBeNull();
+      expect(r.lastError()).toBeNull();
+      await vi.advanceTimersByTimeAsync(49_999);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      r.stop();
+    });
+
+    it("does not stack retries when several refreshes fail before the retry fires", async () => {
+      const fetch = vi.fn(async (): Promise<Snapshot> => {
+        throw new Error("down");
+      });
+      const r = mk(fetch, 60_000, { retryMs: 10_000 });
+      r.start();
+      await vi.advanceTimersByTimeAsync(0);
+      await r.refresh(); // manual refresh also fails
+      await r.refresh();
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(2); // interval + one pending retry
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetch).toHaveBeenCalledTimes(4);
+      r.stop();
+    });
+
+    it("stop() cancels a pending retry", async () => {
+      const fetch = vi.fn(async (): Promise<Snapshot> => {
+        throw new Error("down");
+      });
+      const r = mk(fetch, 60_000, { retryMs: 10_000 });
+      r.start();
+      await vi.advanceTimersByTimeAsync(0);
+      r.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(100_000);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("no retry is scheduled when the reader was never started", async () => {
+      const r = mk(async () => {
+        throw new Error("down");
+      }, 60_000, { retryMs: 10_000 });
+      await r.refresh();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });

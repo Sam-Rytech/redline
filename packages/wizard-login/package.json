@@ -1,0 +1,22 @@
+{
+  "name": "@redline/wizard-login",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server/index.ts",
+    "./client": "./src/client/index.ts",
+    "./testing": "./test/helpers.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bitauth/libauth": "3.0.0",
+    "@redline/api-types": "workspace:*",
+    "@wizardconnect/core": "0.2.11",
+    "@wizardconnect/dapp": "0.2.8"
+  }
+}

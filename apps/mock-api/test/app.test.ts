@@ -100,8 +100,33 @@ describe("mock api", () => {
       await call(`/api/watches/${w.id}`, { method: "PATCH", body: JSON.stringify({ rules: { loanGone: false } }) })
     ).json()) as Watch;
     expect(p.rules).toEqual({ liquidation: true, loanGone: false });
+    // PATCH {} is a no-op, same as the real server
+    const noop = await call(`/api/watches/${w.id}`, { method: "PATCH", body: "{}" });
+    expect(noop.status).toBe(200);
+    expect(((await noop.json()) as Watch).rules).toEqual({ liquidation: true, loanGone: false });
     expect((await call(`/api/watches/${w.id}`, { method: "DELETE" })).status).toBe(200);
     expect(((await (await call("/api/watches")).json()) as Watch[]).length).toBe(0);
+  });
+
+  it("links and unlinks Telegram", async () => {
+    const app = createApp();
+    expect((await app.request("/api/telegram/unlink", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    const call = await signIn(app);
+    await call("/api/mock/telegram-linked");
+    expect(((await (await call("/api/me")).json()) as MeResponse).telegramLinked).toBe(true);
+    const r = await call("/api/telegram/unlink", { method: "POST", body: "{}" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true });
+    expect(((await (await call("/api/me")).json()) as MeResponse).telegramLinked).toBe(false);
+  });
+
+  it("PATCH without JSON content type is 415, like the real server", async () => {
+    const app = createApp();
+    const call = await signIn(app);
+    const { loans } = (await (await app.request("/api/loans")).json()) as LoansResponse;
+    const w = (await (await call("/api/watches", { method: "POST", body: JSON.stringify({ loanId: loans[0]!.id }) })).json()) as Watch;
+    const r = await call(`/api/watches/${w.id}`, { method: "PATCH", headers: { "content-type": "text/plain" }, body: "{}" });
+    expect(r.status).toBe(415);
   });
 
   it("logs out", async () => {
@@ -146,9 +171,33 @@ describe("mock api", () => {
     expect(((await dup.json()) as { error: { code: string } }).error.code).toBe("watch_exists");
   });
 
+  it("rejects every POST without Content-Type: application/json (415), like the real server", async () => {
+    const app = createApp();
+    const code = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+    for (const headers of [undefined, { "content-type": "text/plain" }, { "content-type": "application/x-www-form-urlencoded" }]) {
+      const res = await app.request("/api/auth/verify", { method: "POST", headers, body: JSON.stringify({ signedTxHex: "00" }) });
+      expect(res.status).toBe(415);
+      expect(await code(res)).toBe("bad_content_type");
+    }
+    // logout too (bodyless fetch has no content type), and before the auth check
+    expect((await app.request("/api/auth/logout", { method: "POST" })).status).toBe(415);
+    expect((await app.request("/api/watches", { method: "POST", body: "{}" })).status).toBe(415);
+    // charset parameter is fine; JSON body `{}` on logout is fine
+    const ok = await app.request("/api/auth/logout", {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: "{}",
+    });
+    expect(ok.status).toBe(200);
+  });
+
   it("maps malformed JSON to 400 and unknown paths to 404", async () => {
     const app = createApp();
-    const res = await app.request("/api/auth/verify", { method: "POST", body: "not json" });
+    const res = await app.request("/api/auth/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("bad_request");
     const nope = await app.request("/api/nope");

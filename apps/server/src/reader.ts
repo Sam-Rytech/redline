@@ -18,7 +18,7 @@ export interface ChainReader {
   lastError(): string | null;
   /** one fetch; never throws (records the error instead). Joins an in-flight refresh instead of starting another. */
   refresh(): Promise<void>;
-  /** refresh now, then every intervalMs */
+  /** refresh now, then every intervalMs; after a failed refresh, one quick retry after retryMs */
   start(): void;
   stop(): void;
   onUpdate(fn: (prev: LoanState | null, next: LoanState) => void): void;
@@ -38,11 +38,14 @@ export function createChainReader(opts: {
   intervalMs?: number;
   /** abort a stalled fetch after this long (default 30_000) */
   timeoutMs?: number;
+  /** after a failed refresh (while started), retry once after this long instead of waiting a full interval (default 10_000) */
+  retryMs?: number;
   now?: () => Date;
   log?: (msg: string) => void;
 }): ChainReader {
   const intervalMs = opts.intervalMs ?? 60_000;
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  const retryMs = opts.retryMs ?? 10_000;
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? ((m: string) => console.log(m));
 
@@ -50,9 +53,16 @@ export function createChainReader(opts: {
   let error: string | null = null;
   let inflight: Promise<void> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null; // interval handle
+  let retryTimer: ReturnType<typeof setTimeout> | null = null; // at most one pending quick retry
   const listeners: Array<(prev: LoanState | null, next: LoanState) => void> = [];
 
-  async function run(): Promise<void> {
+  const clearRetry = () => {
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+  };
+
+  /** true when the refresh succeeded */
+  async function run(): Promise<boolean> {
     try {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const pending = opts.fetch();
@@ -66,8 +76,13 @@ export function createChainReader(opts: {
       } finally {
         clearTimeout(timer);
       }
-      if (snap.loans.length === 0 && state !== null && state.loans.length > 0) {
-        throw new Error(`Refresh returned 0 loans (previous state had ${state.loans.length}); keeping previous state`);
+      // mainnet always has loans: an empty snapshot is a bad read, even as the first state
+      if (snap.loans.length === 0) {
+        throw new Error(
+          state === null
+            ? "Refresh returned 0 loans; refusing an empty first state"
+            : `Refresh returned 0 loans (previous state had ${state.loans.length}); keeping previous state`,
+        );
       }
       const loans = computeLoanViews(snap.loans, snap.priceUsd).sort(byDistance);
       const next: LoanState = {
@@ -90,24 +105,37 @@ export function createChainReader(opts: {
           log(`onUpdate listener failed: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+      return true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       log(`chain refresh failed: ${error}`);
+      return false;
     }
   }
 
-  function refresh(): Promise<void> {
+  function refresh(isRetry = false): Promise<void> {
     if (inflight) return inflight;
-    inflight = run().finally(() => {
-      inflight = null;
-    });
+    inflight = run()
+      .then((ok) => {
+        if (ok) clearRetry();
+        // one quick retry per failure; a failed retry waits for the normal interval
+        else if (timer && !retryTimer && !isRetry) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            void refresh(true);
+          }, retryMs);
+        }
+      })
+      .finally(() => {
+        inflight = null;
+      });
     return inflight;
   }
 
   return {
     current: () => state,
     lastError: () => error,
-    refresh,
+    refresh: () => refresh(),
     start() {
       if (timer) return;
       void refresh();
@@ -116,6 +144,7 @@ export function createChainReader(opts: {
     stop() {
       if (timer) clearInterval(timer);
       timer = null;
+      clearRetry();
     },
     onUpdate(fn) {
       listeners.push(fn);
