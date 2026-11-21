@@ -9,7 +9,7 @@ a watched loan gets there. It also shows loans whose debt was paid off by redemp
 still hold BCH their owners have not claimed.
 
 Independent project, not affiliated with ParyonUSD. Built for BCH BLAZE 2026; started 17 Nov 2026,
-no pre-hackathon code. Live site: `<link>`.
+no pre-hackathon code. Live site: https://redline-vert-three.vercel.app (API: https://redline-bch.fly.dev/api/health).
 
 ## What it does
 

@@ -67,6 +67,14 @@ describe("parseConfig", () => {
       parseConfig({ LOGIN_DOMAIN: "redline.example", PUBLIC_ORIGIN: "https://redline.example", TRUST_PROXY_HOPS: "2", LOG_XFF: "1" }),
     ).toMatchObject({ loginDomain: "redline.example", publicOrigin: "https://redline.example", trustProxyHops: 2, logXff: true });
   });
+  it("reads the client and peer IP headers", () => {
+    expect(parseConfig({ CLIENT_IP_HEADER: "X-Real-IP", PEER_IP_HEADER: "fly-client-ip" })).toMatchObject({
+      clientIpHeader: "x-real-ip",
+      peerIpHeader: "fly-client-ip",
+    });
+    expect(parseConfig({})).toMatchObject({ clientIpHeader: undefined, peerIpHeader: undefined });
+    expect(() => parseConfig({ CLIENT_IP_HEADER: "x real ip" })).toThrow(/CLIENT_IP_HEADER/);
+  });
   it("rejects a malformed PUBLIC_ORIGIN or TRUST_PROXY_HOPS", () => {
     expect(() => parseConfig({ PUBLIC_ORIGIN: "https://redline.example/app" })).toThrow(/origin/);
     for (const v of ["-1", "1.5", "abc"]) expect(() => parseConfig({ TRUST_PROXY_HOPS: v })).toThrow(/TRUST_PROXY_HOPS/);

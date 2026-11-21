@@ -78,6 +78,8 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_KEYS = 10_000;
 /** per IP per minute (docs/SECURITY.md) */
 export const LIMITS = { auth: 10, utxos: 30 } as const;
+/** a connection (PEER_IP_HEADER) may carry this many visitors' worth of requests */
+export const PEER_LIMIT_FACTOR = 20;
 export const MAX_UTXO_ADDRESSES = 40;
 const WALLET_ADDRESS_COUNT = 20;
 const WALLET_CACHE_MS = 60_000;
@@ -119,7 +121,8 @@ export interface AppDeps {
   db: Db;
   chain: Chain;
   secrets: Secrets;
-  config: Pick<ServerConfig, "loginDomain" | "publicOrigin" | "trustProxyHops"> & Partial<Pick<ServerConfig, "logXff">>;
+  config: Pick<ServerConfig, "loginDomain" | "publicOrigin" | "trustProxyHops"> &
+    Partial<Pick<ServerConfig, "logXff" | "clientIpHeader" | "peerIpHeader">>;
   now?: () => Date;
   /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
   botUsername?: () => string | undefined;
@@ -164,12 +167,22 @@ export function createApp(deps: AppDeps) {
    * hops = 0: the TCP peer. hops = N: the Nth x-forwarded-for entry from the right (1 = the entry our
    * nearest proxy appended); entries further left are client-controlled.
    */
+  const IP = /^[0-9A-Fa-f.:]{2,45}$/;
+  const headerIp = (c: Context, name: string | undefined): string | undefined => {
+    if (!name) return undefined;
+    const v = c.req.header(name)?.trim();
+    return v && IP.test(v) ? v : undefined;
+  };
+  /** whoever connected to us: the host edge's header when configured, else the TCP peer */
+  const peerIp = (c: Context): string => headerIp(c, config.peerIpHeader) ?? socketIp(c);
   const clientIp = (c: Context): string => {
+    const fromHeader = headerIp(c, config.clientIpHeader);
+    if (fromHeader) return fromHeader;
     if (config.trustProxyHops > 0) {
       const parts = (c.req.header("x-forwarded-for") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
       if (parts.length > 0) return parts[Math.max(0, parts.length - config.trustProxyHops)]!;
     }
-    return socketIp(c);
+    return peerIp(c);
   };
   let xffLogged = 0;
   const limiter = (limit: number) => {
@@ -181,21 +194,28 @@ export function createApp(deps: AppDeps) {
         windowId = w;
         hits.clear();
       }
-      const ip = clientIp(c);
-      if (!hits.has(ip) && hits.size >= RATE_LIMIT_MAX_KEYS) {
-        const oldest = hits.keys().next().value;
-        if (oldest !== undefined) hits.delete(oldest);
-      }
-      const n = (hits.get(ip) ?? 0) + 1;
-      hits.set(ip, n);
-      if (n > limit) return c.json(err("rate_limited", "Too many requests, wait a minute and try again"), 429);
+      const count = (key: string): number => {
+        if (!hits.has(key) && hits.size >= RATE_LIMIT_MAX_KEYS) {
+          const oldest = hits.keys().next().value;
+          if (oldest !== undefined) hits.delete(oldest);
+        }
+        const n = (hits.get(key) ?? 0) + 1;
+        hits.set(key, n);
+        return n;
+      };
+      const visitorOver = count(`ip:${clientIp(c)}`) > limit;
+      const peerOver = config.peerIpHeader !== undefined && count(`peer:${peerIp(c)}`) > limit * PEER_LIMIT_FACTOR;
+      if (visitorOver || peerOver) return c.json(err("rate_limited", "Too many requests, wait a minute and try again"), 429);
       await next();
     };
   };
   app.use("/auth/*", async (c, next) => {
     if (config.logXff && xffLogged < 5) {
       xffLogged++;
-      console.log(`x-forwarded-for (${xffLogged}/5): ${c.req.header("x-forwarded-for") ?? "(none)"}`);
+      const h = (n: string) => c.req.header(n) ?? "(none)";
+      console.log(
+        `x-forwarded-for (${xffLogged}/5): ${h("x-forwarded-for")} | x-real-ip: ${h("x-real-ip")} | x-vercel-forwarded-for: ${h("x-vercel-forwarded-for")} | fly-client-ip: ${h("fly-client-ip")}`,
+      );
     }
     await next();
   });

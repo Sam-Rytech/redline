@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ApiError, ChallengeResponse, LoanView, MeResponse, Utxo } from "@redline/api-types";
 import { computeLoanViews } from "@redline/paryon-decoder";
 import { FUNDING_TXID, makeLoginTx, makeWallet, type TestWallet } from "@redline/wizard-login/testing";
-import { LIMITS, MAX_UTXO_ADDRESSES } from "../src/app.js";
+import { LIMITS, MAX_UTXO_ADDRESSES, PEER_LIMIT_FACTOR } from "../src/app.js";
 import type { Chain } from "../src/electrum.js";
 import type { ChainReader, LoanState } from "../src/reader.js";
 import { TEST_ORIGIN, testApp } from "./support.js";
@@ -66,13 +66,15 @@ function fakeChain(o: { spentElsewhere?: boolean; down?: boolean } = {}) {
 
 type ReqInit = RequestInit & { json?: unknown; cookie?: string; xff?: string; socketIp?: string; origin?: string | null };
 
-function setup(o: { state?: LoanState | null; spentElsewhere?: boolean; down?: boolean; trustProxyHops?: number } = {}) {
+function setup(
+  o: { state?: LoanState | null; spentElsewhere?: boolean; down?: boolean; trustProxyHops?: number; clientIpHeader?: string; peerIpHeader?: string } = {},
+) {
   const { chain, calls } = fakeChain(o);
   let now = NOW;
   const { app, db } = testApp({
     reader: reader(o.state === undefined ? loanState : o.state),
     chain,
-    config: { trustProxyHops: o.trustProxyHops ?? 0 },
+    config: { trustProxyHops: o.trustProxyHops ?? 0, clientIpHeader: o.clientIpHeader, peerIpHeader: o.peerIpHeader },
     now: () => now,
   });
   const bodies: string[] = [];
@@ -396,6 +398,24 @@ describe("request hardening (SECURITY.md)", () => {
     for (let i = 0; i <= LIMITS.auth; i++) await proxied.req("/api/auth/challenge", { json: {}, xff: `6.6.6.${i}, 7.7.7.7` });
     expect((await proxied.req("/api/auth/challenge", { json: {}, xff: "1.1.1.1, 7.7.7.7" })).res.status).toBe(429);
     expect((await proxied.req("/api/auth/challenge", { json: {}, xff: "7.7.7.8" })).res.status).not.toBe(429);
+  });
+
+  it("behind Vercel and Fly: one limit per visitor, and a looser one per connection", async () => {
+    const s = setup({ clientIpHeader: "x-real-ip", peerIpHeader: "fly-client-ip" });
+    // /age-check is limited like /auth and is cheap to call
+    const via = (visitor: string, peer: string) =>
+      s.req("/api/age-check", { json: {}, headers: { "x-real-ip": visitor, "fly-client-ip": peer } });
+    // two visitors behind the same Vercel address do not share a limit
+    for (let i = 0; i < LIMITS.auth; i++) await via("102.0.0.1", "3.66.0.1");
+    expect((await via("102.0.0.1", "3.66.0.1")).res.status).toBe(429);
+    expect((await via("102.0.0.2", "3.66.0.1")).res.status).not.toBe(429);
+    // a direct caller faking x-real-ip is capped by its real address (fly-client-ip)
+    let last = 0;
+    for (let i = 0; i <= LIMITS.auth * PEER_LIMIT_FACTOR; i++) last = (await via(`9.9.${i >> 8}.${i & 255}`, "66.6.6.6")).res.status;
+    expect(last).toBe(429);
+    // a value that is not an IP falls back to the connection
+    for (let i = 0; i < LIMITS.auth; i++) await via("not-an-ip", "5.5.5.5");
+    expect((await via("not-an-ip", "5.5.5.5")).res.status).toBe(429);
   });
 
   it(`/utxos takes at most ${MAX_UTXO_ADDRESSES} mainnet addresses and ${LIMITS.utxos} calls a minute`, async () => {
