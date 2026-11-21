@@ -1,5 +1,5 @@
 import type { LoanView } from "@redline/api-types";
-import { computeLoanViews, type Snapshot } from "@redline/paryon-decoder";
+import { computeLoanViews, type RawLoan, type Snapshot } from "@redline/paryon-decoder";
 
 export interface LoanState {
   blockHeight: number;
@@ -9,6 +9,8 @@ export interface LoanState {
   /** sorted by distanceToLiquidation ascending, stranded (null) last */
   loans: LoanView[];
   byId: Map<string, LoanView>;
+  /** the decoded loans as read from chain (raw rates, exact amounts), for loan_snapshots */
+  raw: RawLoan[];
 }
 
 export interface ChainReader {
@@ -76,6 +78,7 @@ export function createChainReader(opts: {
         updatedAt: now().toISOString(),
         loans,
         byId: new Map(loans.map((l) => [l.id, l])),
+        raw: snap.loans,
       };
       const prev = state;
       state = next;

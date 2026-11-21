@@ -104,8 +104,10 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
 - Secrets only in host environment variables. `.env` files are git-ignored; `.env.example`
   lists every variable the code reads and nothing else.
 - Variables: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`,
-  `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`. (`ELECTRUM_HOST` and the server's
-  refresh settings exist today; the others arrive with the code that reads them.)
+  `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`, `BACKUP_DIR`. Read today:
+  `ELECTRUM_HOST`, `SESSION_SECRET` (at least 32 characters, required in production),
+  `DATABASE_PATH`, `BACKUP_DIR` and the refresh settings; the others arrive with the code that
+  reads them. `apps/server/.env.example` lists exactly the ones read.
 
 ## Privacy and deletion
 
