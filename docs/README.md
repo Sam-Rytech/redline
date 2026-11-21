@@ -14,7 +14,7 @@ Read in this order on a first pull.
 | `BRAND.md` | Name, voice, identity direction (open decisions marked OPEN) |
 | `COMPLIANCE.md` | Age screen, fonts, analytics, legal pages, Pro pass terms; items for a lawyer |
 | `PRACTICES.md` | How we work: contract, layout, docs, code, git, reviews |
-| `DEPLOY.md` | Railway and Vercel setup, the server variables, the proxy hop count, checks after deploy |
+| `DEPLOY.md` | Fly.io and Vercel setup, the server variables, the proxy hop count, checks after deploy |
 | `../PROGRESS.md` | Gates, plan, decision log |
 
 Precedence when documents disagree: `SECURITY.md` and `DATABASE.md` over `ARCHITECTURE.md`;
