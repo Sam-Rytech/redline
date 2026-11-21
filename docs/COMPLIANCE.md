@@ -55,6 +55,10 @@ California auto-renewal law, App Store 3.1.2) is met by saying that plainly, bes
 Not behind a link and not only in the terms. A payment confirmation repeating these terms is
 shown on screen and sent to the linked Telegram chat.
 
+Built: every invoice carries the terms (`Invoice.terms`, `docs/API.md`), and the server sends
+the receipt to the linked Telegram chat once, when the payment is confirmed. The on-screen
+receipt is the web app's part.
+
 DECISION NEEDED: the standing rule asks for a confirmation email. Redline deliberately
 collects no email. Proposed substitute: on-screen receipt plus Telegram message. If the
 owner wants an email too, an email field must be added to sign-up and the marketing-email

@@ -234,14 +234,16 @@ export function createApp() {
     if (body.asset !== "BCH") return c.json(err("bad_request", "asset must be BCH"), 400);
     if (!Array.isArray(body.inputs) || body.inputs.length === 0)
       return c.json(err("bad_request", "inputs must be a non-empty array"), 400);
-    const id = randHex(8);
+    const id = randHex(16);
     const inv: Invoice = {
       id,
       status: "open",
       asset: "BCH",
       amountSats: proPassSats(),
       merchantAddress: MERCHANT_ADDRESS,
-      opReturnHex: toHex("PWINV") + id,
+      // same format as the real server: push "PWINV", then push the 16 id bytes
+      opReturnHex: "05" + toHex("PWINV") + "10" + id,
+      terms: { priceUsd: PRO_PASS_USD, days: PRO_PASS_DAYS, renews: false },
       inputs: body.inputs,
       txid: null,
       createdAt: new Date().toISOString(),

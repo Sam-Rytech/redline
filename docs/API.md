@@ -22,7 +22,7 @@ Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay
 ```bash
 pnpm dev:server        # http://localhost:8787/api  (stop the mock first: same port)
 ```
-Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s, plus the age screen, wallet sign-in, `/api/me`, `/api/me/loans`, `DELETE /api/me`, `/api/utxos`, watches and Telegram linking. Invoices (the Pro pass) are not on the real server yet (404 `not_found`); use the mock for that screen. Telegram linking answers 503 `telegram_unavailable` while the server has no `TELEGRAM_BOT_TOKEN`.
+Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s, plus the age screen, wallet sign-in, `/api/me`, `/api/me/loans`, `DELETE /api/me`, `/api/utxos`, watches, Telegram linking and the Pro pass invoices. Telegram linking answers 503 `telegram_unavailable` while the server has no `TELEGRAM_BOT_TOKEN`; invoice routes answer 503 `payments_unavailable` while it has no `MERCHANT_ADDRESS`.
 
 Every POST, PATCH and DELETE must send `Origin` equal to the server's `PUBLIC_ORIGIN` (a browser does this itself) and, except DELETE, `Content-Type: application/json` (also for logout: send `{}`). Locally `PUBLIC_ORIGIN` defaults to `http://localhost:5173`.
 
@@ -48,17 +48,17 @@ Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with deb
 | POST | /api/auth/verify | `rl_ch` | `MeResponse` + `rl_session` cookie |
 | POST | /api/auth/logout | – | `{ ok: true }` |
 | GET | /api/utxos?addresses=a,b | – | `Utxo[]` |
-| GET | /api/me | ✓ | `MeResponse` |
-| DELETE | /api/me | ✓ | `{ ok: true }`: removes the account, sessions, watches, alert history, invoices and Telegram link |
-| GET | /api/me/loans | ✓ | `LoanView[]` |
-| GET/POST | /api/watches | ✓ | `Watch[]` / `Watch` (201) — 403 `watch_limit` on free plan, 409 `watch_exists` if already watched |
-| PATCH/DELETE | /api/watches/:id | ✓ | `Watch` / `{ ok: true }` |
-| POST | /api/telegram/link-token | ✓ | `TelegramLinkResponse`: open `url` to link the chat; the token is single use and lasts 10 minutes |
-| POST | /api/telegram/unlink | ✓ | `{ ok: true }` |
-| GET | /api/invoices/quote | ✓ | `InvoiceQuote` |
-| POST | /api/invoices | ✓ | `Invoice` (201) |
-| GET | /api/invoices/:id | ✓ | `Invoice` |
-| POST | /api/invoices/:id/submit | ✓ | `Invoice` |
+| GET | /api/me | yes | `MeResponse` |
+| DELETE | /api/me | yes | `{ ok: true }`: removes the account, sessions, watches, alert history, invoices and Telegram link |
+| GET | /api/me/loans | yes | `LoanView[]` |
+| GET/POST | /api/watches | yes | `Watch[]` / `Watch` (201) — 403 `watch_limit` on free plan, 409 `watch_exists` if already watched |
+| PATCH/DELETE | /api/watches/:id | yes | `Watch` / `{ ok: true }` |
+| POST | /api/telegram/link-token | yes | `TelegramLinkResponse`: open `url` to link the chat; the token is single use and lasts 10 minutes |
+| POST | /api/telegram/unlink | yes | `{ ok: true }` |
+| GET | /api/invoices/quote | yes | `InvoiceQuote` |
+| POST | /api/invoices | yes | `Invoice` (201) |
+| GET | /api/invoices/:id | yes | `Invoice` |
+| POST | /api/invoices/:id/submit | yes | `Invoice` |
 
 API errors use this envelope: `{ "error": { "code": "...", "message": "..." } }`. Codes are listed under "Error codes" below.
 
@@ -70,18 +70,69 @@ API errors use this envelope: `{ "error": { "code": "...", "message": "..." } }`
 - `POST /api/auth/logout`: `{}`
 - `POST /api/watches`: `{ loanId, rules? }`
 - `PATCH /api/watches/:id`: `{ rules }`
-- `POST /api/invoices`: `{ asset: "BCH", inputs: Outpoint[] }` (inputs non-empty)
+- `POST /api/invoices`: `{ asset: "BCH", inputs: Outpoint[] }` (1 to 10 inputs)
 - `POST /api/invoices/:id/submit`: `{ signedTxHex }`
 
-## Pro pass payment flow
+## Pro pass payment
 
-1. `GET /api/invoices/quote` for `amountSats` and the merchant address.
-2. Pick inputs worth at least `amountSats` + fee.
-3. `POST /api/invoices` with those inputs.
-4. Sign with `broadcast: true`.
-5. `POST /api/invoices/:id/submit` with the signed tx.
+A 30-day Pro pass costs 0.25 USD, paid once in BCH on mainnet. It never renews.
 
-Store the invoice id in localStorage so a reload can `GET /api/invoices/:id` and show "Already paid ✓".
+**On the screen** (docs/COMPLIANCE.md): beside the pay button, show the terms from the invoice or
+the quote, for example "Pro pass: 0.25 USD, paid once in BCH (about 0.00131 BCH at today's price).
+Lasts 30 days. Does not renew. You are not charged again. Nothing to cancel." Every `Invoice`
+carries them as `terms: { priceUsd: 0.25, days: 30, renews: false }`. After payment, show the
+terms again as the receipt; the server also sends the receipt to the linked Telegram chat.
+
+**In the browser**, `payProPass` from `@redline/wizard-login/client` does the whole flow:
+
+```ts
+import { payProPass, PaymentError } from "@redline/wizard-login/client";
+
+const invoice = await payProPass({
+  manager: conn.manager,            // the WizardConnect connection from sign-in
+  onStep: (step, detail) => setStep(step), // quote, coins, invoice, signing, submitting, checking
+}); // resolves with the paid Invoice
+```
+
+- It keeps the pending invoice id in `localStorage["redline-pending-invoice"]`. A reload or retry
+  continues that invoice with the same coins, so a second payment is a double spend the network
+  refuses. If the server finds the payment already on chain, the step `checking` says
+  "Already paid".
+- `PaymentError.code`: `no_paths`, `no_funds` (says how many sats and names receive address 0,
+  also in `address`), `wallet_rejected` (the wallet's own message; the invoice is kept, never
+  retry with other coins), `server_rejected` (`serverCode`, `status` from the API),
+  `already_paid` (show "Already paid" and refresh `/me`), `network`.
+
+**The routes**, all needing a session (401) and limited to 5 requests a minute per account (429):
+
+- `GET /api/invoices/quote` → `InvoiceQuote`: `amountSats = ceil(0.25 / priceUsd x 1e8)` at the
+  current on-chain price, valid 5 minutes. 503 `not_ready` before chain data, or while the price
+  is outside 10 to 100,000 USD per BCH (a broken feed sells nothing).
+- `POST /api/invoices` → 201 `Invoice`. The amount is fixed by the server. Every input is read
+  from the chain: it must exist, carry no tokens, be unspent and sit on receive or change address
+  0 to 19 of the signed-in wallet. Invoices expire after 30 minutes. Errors (400 unless noted):
+  `bad_request`, `duplicate_input`, `input_not_found`, `foreign_input`, `token_input`,
+  `input_spent`, `insufficient_inputs`; 409 `already_paid` (an earlier invoice turned out to be
+  paid; Pro is on); 409 `invoice_open` (another invoice is still payable; `error.invoiceId`
+  names it, pay that one); 503 `chain_unavailable` when an earlier payment cannot be checked (it
+  fails closed rather than risk charging twice).
+- `POST /api/invoices/:id/submit { signedTxHex }` → the paid `Invoice`. The transaction must
+  spend exactly the invoice's inputs, pay at least `amountSats` to `merchantAddress`, carry the
+  invoice's OP_RETURN once, and no tokens. The server broadcasts it, confirms the network knows
+  it, and only then marks the invoice paid and extends Pro by 30 days (stacking on a running
+  pass). A second submit returns the same invoice. Errors: 400 `bad_tx`, `wrong_inputs`,
+  `underpaid`, `wrong_op_return`, `token_output`; 409 `inputs_spent`; 502 `broadcast_failed`.
+- `GET /api/invoices/:id` → `Invoice`. While unpaid, if its coins were spent the server looks
+  for the payment on chain and marks it paid when found. Otherwise it carries `inputsSpent: true`:
+  start a new invoice.
+
+`Invoice.opReturnHex` is the OP_RETURN payload after the `0x6a` opcode: a push of "PWINV" and a
+push of the 16 id bytes. `encodeInvoiceOpReturn(id)` from `@redline/wizard-login` builds it.
+
+**Accepted risks.** Paid means the network has the transaction, not that it is confirmed: a payer
+could try to double-spend after Pro starts (a race for 0.25 USD). The server trusts the public
+Fulcrum servers it reads from. Coin ownership uses the change xpub as sent at sign-in, which
+sign-in does not prove; at worst a user locks their own coins into their own invoice.
 
 ## Error codes
 
@@ -106,14 +157,12 @@ All errors use the envelope above. Every code below is returned by the real serv
 | 503 | `not_ready` | chain data not loaded yet |
 | 503 | `chain_unavailable` | the BCH network could not be reached; try again |
 | 503 | `telegram_unavailable` | the server has no Telegram bot configured |
+| 503 | `payments_unavailable` | the server has no `MERCHANT_ADDRESS` |
+| 400, 409, 502 | payment codes | listed under "Pro pass payment" above |
 
 ## Planned contract changes (not yet in `api-types`)
 
-Each becomes a type change, announced in the team chat, when it is built.
-
-| Change | Why |
-|---|---|
-| `Invoice` response adds `terms: { priceUsd, days: 30, renews: false }` | the pay button shows the terms beside it |
+None outstanding: every agreed change is in `api-types` and on the real server.
 
 ## Mock-only behaviour
 

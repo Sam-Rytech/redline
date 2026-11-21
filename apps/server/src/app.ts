@@ -9,6 +9,7 @@ import {
   type ApiError,
   type ChallengeRequest,
   type ChallengeResponse,
+  type Invoice,
   type LoansResponse,
   type LoanView,
   type MeResponse,
@@ -53,7 +54,9 @@ import {
   toWatch,
   updateWatchRules,
 } from "./db/watches.js";
-import { addressFor, type Chain } from "./electrum.js";
+import { addressFor, type Chain, type PaymentChain } from "./electrum.js";
+import { invoiceStore } from "./db/invoices.js";
+import { ChainUnavailable, createInvoices, priceUsable, type InvoiceResult, type PayingAccount } from "./invoices.js";
 import type { ChainReader } from "./reader.js";
 
 const err = (code: string, message: string): ApiError => ({ error: { code, message } });
@@ -80,6 +83,18 @@ const WALLET_ADDRESS_COUNT = 20;
 const WALLET_CACHE_MS = 60_000;
 /** Telegram link tokens: single use, 10 minutes, 128 bits (docs/SECURITY.md) */
 export const LINK_TOKEN_SECONDS = 10 * 60;
+/** invoice routes: per account per minute (docs/SECURITY.md) */
+export const INVOICE_LIMIT = 5;
+
+/** Payment receipt (docs/COMPLIANCE.md): the terms again, after payment. Plain text, no emojis. */
+export function receiptText(inv: Invoice, proUntil: number | null): string {
+  const until = proUntil === null ? "" : ` Pro runs until ${new Date(proUntil * 1000).toISOString().slice(0, 10)}.`;
+  return [
+    `Redline: payment received. Pro pass: ${inv.terms.priceUsd.toFixed(2)} USD, paid once in BCH (${inv.amountSats.toLocaleString("en-US")} satoshis).`,
+    `Lasts ${inv.terms.days} days.${until} Does not renew. You are not charged again. Nothing to cancel.`,
+    `Transaction ${inv.txid ?? ""}`,
+  ].join("\n");
+}
 
 const isToken = (t: string | undefined): t is string => typeof t === "string" && /^[0-9a-f]{64}$/.test(t);
 const MAX_LOAN_ID_LENGTH = 128;
@@ -108,6 +123,12 @@ export interface AppDeps {
   now?: () => Date;
   /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
   botUsername?: () => string | undefined;
+  /** Pro pass payments (MERCHANT_ADDRESS set); without it the invoice routes answer 503 payments_unavailable */
+  payments?: { merchantAddress: string; chain: PaymentChain; sleep?: (ms: number) => Promise<void> };
+  /** sends a message to the account's linked Telegram chat, if any (payment receipts) */
+  notifyAccount?: (accountId: string, text: string) => Promise<void>;
+  /** invoice requests per account per minute (default INVOICE_LIMIT) */
+  invoiceLimit?: number;
 }
 
 export function createApp(deps: AppDeps) {
@@ -485,6 +506,89 @@ export function createApp(deps: AppDeps) {
     if (!s) return unauthorized(c);
     if (!deleteWatch(db, s.account.id, c.req.param("id"))) return c.json(err("not_found", "No such watch"), 404);
     return c.json({ ok: true } satisfies OkResponse);
+  });
+
+  // ---------- invoices (30-day Pro pass) ----------
+  const invoices = deps.payments
+    ? createInvoices({
+        db: invoiceStore(db),
+        chain: deps.payments.chain,
+        merchantAddress: deps.payments.merchantAddress,
+        now: nowSec,
+        ...(deps.payments.sleep && { sleep: deps.payments.sleep }),
+        onPaid: (inv) => {
+          const row = db.prepare("SELECT account_id FROM invoices WHERE id = ?").get(inv.id) as { account_id: string } | undefined;
+          if (!row || !deps.notifyAccount) return;
+          const proUntil = getAccount(db, row.account_id)?.proUntil ?? null;
+          deps.notifyAccount(row.account_id, receiptText(inv, proUntil)).catch((e: unknown) =>
+            console.error(`payment receipt not sent: ${e instanceof Error ? e.message : String(e)}`),
+          );
+        },
+      })
+    : null;
+  const noPayments = (c: Context) => c.json(err("payments_unavailable", "Payments are not available right now"), 503);
+  const invoiceReply = async (c: Context, run: () => Promise<InvoiceResult>) => {
+    try {
+      const r = await run();
+      return c.json(r.body, r.status);
+    } catch (e) {
+      if (e instanceof ChainUnavailable) return chainDown(c, e);
+      throw e;
+    }
+  };
+  // per account, fixed one-minute window
+  let invoiceWindow = -1;
+  const invoiceHits = new Map<string, number>();
+  const overInvoiceLimit = (accountId: string): boolean => {
+    const w = Math.floor(now().getTime() / RATE_WINDOW_MS);
+    if (w !== invoiceWindow) {
+      invoiceWindow = w;
+      invoiceHits.clear();
+    }
+    const n = (invoiceHits.get(accountId) ?? 0) + 1;
+    invoiceHits.set(accountId, n);
+    return n > (deps.invoiceLimit ?? INVOICE_LIMIT);
+  };
+  /** the signed-in account with its wallet keys, or a ready error response */
+  const payer = (c: Context): { a: PayingAccount } | { res: Response } => {
+    const s = signedIn(c);
+    if (!s) return { res: unauthorized(c) };
+    if (!invoices) return { res: noPayments(c) };
+    if (overInvoiceLimit(s.account.id)) return { res: c.json(err("rate_limited", "Too many requests, wait a minute and try again"), 429) };
+    const keys = s.keys();
+    if (!keys) return { res: unauthorized(c) };
+    return { a: { id: s.account.id, ...keys } };
+  };
+
+  app.get("/invoices/quote", (c) => {
+    const p = payer(c);
+    if ("res" in p) return p.res;
+    const st = reader.current();
+    // a price outside 10..100000 USD/BCH means a broken feed: sell nothing
+    if (!st || !priceUsable(st.priceUsd)) return notReady(c);
+    return c.json(invoices!.quote(st.priceUsd));
+  });
+
+  app.post("/invoices", async (c) => {
+    const p = payer(c);
+    if ("res" in p) return p.res;
+    const st = reader.current();
+    if (!st || !priceUsable(st.priceUsd)) return notReady(c);
+    const body = await readJson<Record<string, unknown>>(c);
+    return invoiceReply(c, () => invoices!.create(p.a, body, st.priceUsd));
+  });
+
+  app.get("/invoices/:id", async (c) => {
+    const p = payer(c);
+    if ("res" in p) return p.res;
+    return invoiceReply(c, () => invoices!.get(p.a, c.req.param("id")));
+  });
+
+  app.post("/invoices/:id/submit", async (c) => {
+    const p = payer(c);
+    if ("res" in p) return p.res;
+    const body = await readJson<Record<string, unknown>>(c);
+    return invoiceReply(c, () => invoices!.submit(p.a, c.req.param("id"), body));
   });
 
   // ---------- Telegram linking ----------

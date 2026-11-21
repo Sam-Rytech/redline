@@ -59,6 +59,20 @@
       </section>
 
 
+      <section id="pay" hidden>
+        <h2>30-day Pro pass</h2>
+        <p>Status: <span id="pro-status">(loading...)</span></p>
+        <p>Price: <span id="quote">(loading...)</span></p>
+        <p class="small">Real mainnet payment from your wallet: it signs <strong>and sends</strong>. A retry reuses the same coins, so one invoice cannot be paid twice.</p>
+        <p id="terms" class="small"></p>
+        <button id="buy">Pay 0.25 USD in BCH</button>
+        <div id="pay-result" hidden>
+          <p>Payment txid: <code id="pay-txid"></code></p>
+          <p class="small" id="pay-link"></p>
+          <pre id="pay-me"></pre>
+        </div>
+      </section>
+
       <section>
         <h2>Log</h2>
         <pre id="log"></pre>

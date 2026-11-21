@@ -96,6 +96,12 @@ They are not needed for alerts.
   recipient and invoice id in the OP_RETURN. A txid is unique to an invoice (database
   constraint), so one payment cannot activate two invoices.
 - Pro status extends on the existing `pro_until`; two payments add 30 days each.
+- Every coin in an invoice is read from the chain and must sit on the signed-in wallet's receive
+  or change address 0 to 19 (from the session's keys), carry no tokens and be unspent. An earlier
+  invoice that cannot be checked blocks a new purchase (fail closed, so nobody pays twice).
+- Accepted risks (hackathon scope): paid means the network has the transaction, not that it is
+  confirmed; the server trusts the public Fulcrum servers it reads from. Details in
+  `docs/API.md` "Pro pass payment".
 
 ## Data integrity of the alarm
 
@@ -132,8 +138,8 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
   lists every variable the code reads and nothing else.
 - Variables: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`,
   `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`, `BACKUP_DIR`, `TRUST_PROXY_HOPS`,
-  `LOG_XFF`. Read today: all except `MERCHANT_ADDRESS`, which arrives with the code that
-  reads it. `SESSION_SECRET` (at least 32 characters) and `PUBLIC_ORIGIN`
+  `LOG_XFF`. All are read today. Telegram is off without `TELEGRAM_BOT_TOKEN`, and payments
+  are off without `MERCHANT_ADDRESS` (a mainnet `bitcoincash:` address, checked at start). `SESSION_SECRET` (at least 32 characters) and `PUBLIC_ORIGIN`
   are required in production. `apps/server/.env.example` lists exactly the ones read.
 
 ## Privacy and deletion
