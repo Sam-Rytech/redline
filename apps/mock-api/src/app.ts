@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type {
   ApiError,
@@ -34,6 +35,18 @@ const readJson = async <T>(c: Context): Promise<T | null> => {
 };
 const badJson = (c: Context) => c.json(err("bad_request", "Valid JSON body required"), 400);
 const toHex = (s: string) => Buffer.from(s, "utf8").toString("hex");
+const MAX_BODY_BYTES = 16 * 1024;
+
+/** Same rule as the real server: 13 or older on today's UTC date. */
+function ageResult(dob: unknown): "ok" | "blocked" | "invalid" {
+  if (typeof dob !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return "invalid";
+  const [y, m, d] = dob.split("-").map(Number) as [number, number, number];
+  const born = new Date(Date.UTC(y, m - 1, d));
+  const today = new Date();
+  if (born.getUTCDate() !== d || born.getUTCMonth() !== m - 1 || y < 1900 || born > today) return "invalid";
+  const before = today.getUTCMonth() < m - 1 || (today.getUTCMonth() === m - 1 && today.getUTCDate() < d);
+  return today.getUTCFullYear() - y - (before ? 1 : 0) >= 13 ? "ok" : "blocked";
+}
 
 export function createApp() {
   const state = newState();
@@ -47,6 +60,20 @@ export function createApp() {
     const guarded = PROTECTED.some((x) => p === x || p.startsWith(x + "/"));
     if (guarded && !authed(c)) return c.json(err("unauthorized", "Sign in first"), 401);
     await next();
+  });
+
+  // Same request rules as the real server, except the Origin check (the mock runs behind any dev proxy).
+  const limitBody = bodyLimit({
+    maxSize: MAX_BODY_BYTES,
+    onError: (c) => c.json(err("too_large", "Request body over 16 KB"), 413),
+  });
+  app.use("*", async (c, next) => {
+    const m = c.req.method;
+    if (m !== "POST" && m !== "PATCH" && m !== "PUT") return next();
+    if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+      return c.json(err("forbidden_origin", "Request body must be application/json"), 403);
+    }
+    return limitBody(c, next);
   });
 
   app.notFound((c) => c.json(err("not_found", "No such route"), 404));
@@ -73,8 +100,24 @@ export function createApp() {
     return l ? c.json(l) : c.json(err("not_found", "No such loan"), 404);
   });
 
+  // ---- age screen
+  app.post("/age-check", async (c) => {
+    if (getCookie(c, "rl_age") === "blocked") return c.json(err("age_blocked", "Redline is not available to you"), 403);
+    const body = await readJson<{ dateOfBirth?: unknown }>(c);
+    const r = ageResult(body?.dateOfBirth);
+    if (r === "invalid") return c.json(err("bad_request", "dateOfBirth must be a real past date as YYYY-MM-DD"), 400);
+    setCookie(c, "rl_age", r, { httpOnly: true, sameSite: "Lax", path: "/" });
+    if (r === "blocked") return c.json(err("age_blocked", "Redline is not available to you"), 403);
+    return c.json({ ok: true });
+  });
+
   // ---- auth
-  app.post("/auth/challenge", (c) => {
+  app.post("/auth/challenge", async (c) => {
+    const age = getCookie(c, "rl_age");
+    if (age === "blocked") return c.json(err("age_blocked", "Redline is not available to you"), 403);
+    if (age !== "ok") return c.json(err("age_required", "Confirm your date of birth before signing in"), 403);
+    if (!(await readJson(c))) return badJson(c);
+    setCookie(c, "rl_ch", "mock-browser", { httpOnly: true, sameSite: "Lax", path: "/api/auth", maxAge: 300 });
     const body: ChallengeResponse = {
       nonce: randHex(16),
       expiry: Math.floor(Date.now() / 1000) + 300,
@@ -83,6 +126,9 @@ export function createApp() {
     return c.json(body);
   });
   app.post("/auth/verify", async (c) => {
+    const bound = getCookie(c, "rl_ch") === "mock-browser";
+    deleteCookie(c, "rl_ch", { path: "/api/auth" });
+    if (!bound) return c.json(err("challenge_mismatch", "Ask for a challenge from this browser first"), 403);
     const body = await readJson<{ signedTxHex?: string }>(c);
     if (!body) return badJson(c);
     const { signedTxHex } = body;
@@ -107,6 +153,12 @@ export function createApp() {
 
   // ---- me
   app.get("/me", (c) => c.json(me(state)));
+  app.delete("/me", (c) => {
+    const fresh = newState();
+    Object.assign(state, fresh);
+    deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    return c.json({ ok: true });
+  });
   app.get("/me/loans", (c) => c.json(loans.slice(0, 3)));
 
   // ---- watches

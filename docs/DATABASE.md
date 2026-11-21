@@ -45,7 +45,7 @@ CREATE TABLE accounts (
 -- Single-use sign-in challenges. Purged after 1 hour.
 CREATE TABLE challenges (
   nonce       TEXT PRIMARY KEY,          -- 16 bytes hex
-  browser_id  TEXT NOT NULL,             -- value of the rl_ch cookie
+  browser_id  TEXT NOT NULL,             -- sha256 of the rl_ch cookie value
   outpoint    TEXT NOT NULL,             -- txid:vout
   path        TEXT NOT NULL,             -- e.g. receive/3
   domain      TEXT NOT NULL,
@@ -55,7 +55,7 @@ CREATE TABLE challenges (
 
 -- Holds the wallet's xpubs for the life of the session only.
 CREATE TABLE sessions (
-  id          TEXT PRIMARY KEY,          -- random; the cookie holds this
+  id          TEXT PRIMARY KEY,          -- sha256 of the random rl_session cookie value
   account_id  TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   keys_enc    BLOB NOT NULL,             -- xpubs, encrypted with a key from SESSION_SECRET
   created_at  INTEGER NOT NULL,
@@ -130,7 +130,8 @@ CREATE TABLE loan_snapshots (
 | Change | Reason |
 |---|---|
 | `accounts` has no `xpub_receive` or `xpub_change` | data minimisation; xpubs live only in `sessions.keys_enc` |
-| `challenges.browser_id` added | binds a challenge to the browser that asked (relay attack) |
+| `challenges.browser_id` added | binds a challenge to the browser that asked (relay attack); stores a hash, not the cookie |
+| `sessions.id` is the cookie's hash | a database leak cannot be replayed as a session cookie |
 | `accounts.age_ok` added | age screen stores the result only |
 | `telegram_links` stores a hash, not the token | a database leak cannot be used to link a chat |
 | `watches.missed_reads` added | "loan gone" needs 3 consecutive misses |

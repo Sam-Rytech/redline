@@ -1,11 +1,13 @@
 import { serve } from "@hono/node-server";
-import { fetchSnapshot } from "@redline/paryon-decoder";
+import { createSnapshotFetcher, electrumHosts } from "@redline/paryon-decoder";
 import { createApp } from "./app.js";
 import { parseConfig } from "./config.js";
+import { createSecrets } from "./crypto.js";
 import { startBackups } from "./db/backup.js";
 import { openDatabase } from "./db/open.js";
 import { startRetention } from "./db/retention.js";
 import { recordSnapshot } from "./db/snapshots.js";
+import { createElectrumChain } from "./electrum.js";
 import { createChainReader } from "./reader.js";
 
 const config = parseConfig(process.env);
@@ -15,8 +17,9 @@ const db = openDatabase(config.databasePath);
 const stopRetention = startRetention(db);
 const stopBackups = config.backupDir ? startBackups(db, config.backupDir) : () => {};
 
+const hostnames = electrumHosts(config.electrumHost);
 const reader = createChainReader({
-  fetch: () => fetchSnapshot(config.electrumHost ? { hostname: config.electrumHost } : {}),
+  fetch: createSnapshotFetcher({ hostnames, log: (m) => console.log(m) }),
   intervalMs: config.refreshMs,
   timeoutMs: config.timeoutMs,
 });
@@ -25,8 +28,16 @@ reader.onUpdate((_prev, next) => {
 });
 reader.start();
 
-const server = serve({ fetch: createApp({ reader }).fetch, port: config.port }, () => {
-  console.log(`Redline API on http://localhost:${config.port}/api`);
+const app = createApp({
+  reader,
+  db,
+  chain: createElectrumChain({ hostnames }),
+  secrets: createSecrets(config.sessionSecret),
+  config,
+});
+
+const server = serve({ fetch: app.fetch, port: config.port }, () => {
+  console.log(`Redline API on http://localhost:${config.port}/api (login domain ${config.loginDomain})`);
 });
 
 const shutdown = () => {
