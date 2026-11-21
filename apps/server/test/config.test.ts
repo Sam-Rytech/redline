@@ -18,6 +18,7 @@ describe("parseConfig", () => {
       trustProxyHops: 0,
       logXff: false,
       telegramBotToken: undefined,
+      merchantAddress: undefined,
       production: false,
     });
     expect(c.sessionSecret.length).toBeGreaterThanOrEqual(32);
@@ -51,6 +52,12 @@ describe("parseConfig", () => {
     expect(parseConfig({ ...prod, SESSION_SECRET: SECRET })).toMatchObject({
       production: true, publicOrigin: "https://redline.example", warnings: [],
     });
+  });
+  it("reads and checks MERCHANT_ADDRESS", () => {
+    const z = "bitcoincash:zq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygyzxn9ta6";
+    expect(parseConfig({ MERCHANT_ADDRESS: ` ${z} ` }).merchantAddress).toBe(z);
+    expect(() => parseConfig({ MERCHANT_ADDRESS: "zq3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygyzxn9ta6" })).toThrow(/MERCHANT_ADDRESS/);
+    expect(() => parseConfig({ MERCHANT_ADDRESS: "bitcoincash:nope" })).toThrow(/MERCHANT_ADDRESS/);
   });
   it("reads the Telegram bot token", () => {
     expect(parseConfig({ TELEGRAM_BOT_TOKEN: "123:abc" }).telegramBotToken).toBe("123:abc");

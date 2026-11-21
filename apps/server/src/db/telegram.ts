@@ -37,6 +37,11 @@ export function accountForChat(db: Db, chatId: string): string | null {
   return (db.prepare("SELECT account_id FROM telegram_chats WHERE chat_id = ?").get(chatId) as { account_id: string } | undefined)?.account_id ?? null;
 }
 
+/** the account's linked chat, or null */
+export function chatOfAccount(db: Db, accountId: string): string | null {
+  return (db.prepare("SELECT chat_id FROM telegram_chats WHERE account_id = ?").get(accountId) as { chat_id: string } | undefined)?.chat_id ?? null;
+}
+
 export function setMuted(db: Db, accountId: string, muted: boolean): void {
   db.prepare("UPDATE accounts SET muted = ? WHERE id = ?").run(muted ? 1 : 0, accountId);
 }

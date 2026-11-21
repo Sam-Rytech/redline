@@ -15,7 +15,8 @@ export type ISODate = string; // e.g. "2026-11-20T12:00:00.000Z"
 export type Hex = string;
 
 export interface ApiError {
-  error: { code: string; message: string };
+  /** `invoiceId` is set on 409 `invoice_open`: continue that invoice instead of starting a new one */
+  error: { code: string; message: string; invoiceId?: string };
 }
 
 export interface Outpoint {
@@ -200,13 +201,32 @@ export interface Invoice {
   asset: "BCH";
   amountSats: number;
   merchantAddress: string; // bitcoincash:z…
-  /** OP_RETURN payload hex: "PWINV" | id */
+  /**
+   * OP_RETURN payload hex after the 0x6a opcode: push "PWINV" + push of the 16 id bytes
+   * (05 5057494e56 10 <id>). The output's locking bytecode is "6a" + this.
+   */
   opReturnHex: Hex;
   /** Inputs the client must reuse on any retry */
   inputs: Outpoint[];
   txid: Hex | null;
   createdAt: ISODate;
   paidAt: ISODate | null;
+  /**
+   * Set by GET /api/invoices/:id on an unpaid invoice: true when one of its inputs is spent by a
+   * transaction that does not pay it (the invoice can never be paid; start a new one).
+   */
+  inputsSpent?: boolean;
+  /** Shown beside the pay button (docs/COMPLIANCE.md): one payment, 30 days, no renewal. */
+  terms: ProPassTerms;
+}
+
+export interface ProPassTerms {
+  /** price in US dollars, paid once in BCH */
+  priceUsd: number;
+  /** how long Pro lasts */
+  days: number;
+  /** always false: the pass never renews and nothing is charged again */
+  renews: false;
 }
 
 export const PRO_PASS_USD = 0.25;

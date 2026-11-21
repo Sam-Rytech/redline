@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { cashAddressToLockingBytecode } from "@bitauth/libauth";
 
 export interface ServerConfig {
   port: number;
@@ -21,12 +22,22 @@ export interface ServerConfig {
   logXff: boolean;
   /** Telegram bot token from @BotFather; alerts and linking are off when unset. Never logged. */
   telegramBotToken: string | undefined;
+  /** where Pro pass payments go: a mainnet bitcoincash: address (token-aware z... preferred); payments are off when unset */
+  merchantAddress: string | undefined;
   production: boolean;
   /** Non-fatal problems to log at start-up. */
   warnings: string[];
 }
 
 const MIN_SECRET_LENGTH = 32;
+
+function parseMerchant(raw: string | undefined): string | undefined {
+  const v = raw?.trim();
+  if (!v) return undefined;
+  const d = v.startsWith("bitcoincash:") ? cashAddressToLockingBytecode(v) : "missing the bitcoincash: prefix";
+  if (typeof d === "string") throw new Error(`MERCHANT_ADDRESS must be a mainnet bitcoincash: address (${d})`);
+  return v;
+}
 
 const positive = (v: string | undefined, fallback: number, min = 0): number => {
   if (v === undefined || v.trim() === "") return fallback;
@@ -69,6 +80,7 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     trustProxyHops: hops === "" ? 0 : Number(hops),
     logXff: env.LOG_XFF === "1",
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || undefined,
+    merchantAddress: parseMerchant(env.MERCHANT_ADDRESS),
     production,
     warnings,
   };

@@ -8,6 +8,7 @@ import { openDatabase } from "./db/open.js";
 import { startRetention } from "./db/retention.js";
 import { recordSnapshot } from "./db/snapshots.js";
 import { createAlertRunner } from "./alerts.js";
+import { chatOfAccount } from "./db/telegram.js";
 import { createElectrumChain } from "./electrum.js";
 import { startTelegramBot } from "./telegram/bot.js";
 import { createChainReader } from "./reader.js";
@@ -44,10 +45,17 @@ if (telegram) {
 }
 reader.start();
 
+const chain = createElectrumChain({ hostnames });
+if (!config.merchantAddress) console.warn("warning: MERCHANT_ADDRESS is not set; the Pro pass cannot be bought");
 const app = createApp({
   reader,
   db,
-  chain: createElectrumChain({ hostnames }),
+  chain,
+  ...(config.merchantAddress && { payments: { merchantAddress: config.merchantAddress, chain } }),
+  notifyAccount: async (accountId, text) => {
+    const chatId = chatOfAccount(db, accountId);
+    if (telegram && chatId) await telegram.sendMessage(chatId, text);
+  },
   secrets: createSecrets(config.sessionSecret),
   config,
   botUsername: () => telegram?.username(),
