@@ -1,0 +1,35 @@
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg-grouped);
+  color: var(--label);
+  font: 400 var(--text-body) / var(--lead-ui) var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+img, svg, video { display: block; max-width: 100%; }
+button, input, select { font: inherit; color: inherit; }
+a { color: inherit; }
+h1, h2, h3, p { margin: 0; }
+.display {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-stretch: var(--display-stretch);
+  text-transform: uppercase;
+  line-height: 0.86;
+  letter-spacing: -0.005em;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-footnote);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.num { font-variant-numeric: tabular-nums; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+@media (min-width: 900px) {
+  :root { --gutter: max(var(--space-12), env(safe-area-inset-left)); }
+}

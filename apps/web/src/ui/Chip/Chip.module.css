@@ -1,0 +1,5 @@
+.chip { display: inline-flex; align-items: center; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-chip); font-weight: 500; }
+.safe { color: var(--risk-safe); background: var(--risk-safe-bg); }
+.watch { color: var(--risk-watch); background: var(--risk-watch-bg); }
+.danger { color: var(--risk-danger); background: var(--risk-danger-bg); }
+.critical { color: var(--risk-critical); background: var(--risk-critical-bg); }
