@@ -1,0 +1,37 @@
+# Redline API server on Fly.io (docs/DEPLOY.md). Build context is the repo root.
+# `app` is set by `fly apps create`; change it here if you pick another name.
+app = "redline-bch"
+primary_region = "ams"
+
+[build]
+  dockerfile = "apps/server/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8787"
+  DATABASE_PATH = "/data/redline.db"
+  BACKUP_DIR = "/data/backups"
+
+# the SQLite file and its backups; create once with `fly volumes create redline_data --region ams --size 1`
+[mounts]
+  source = "redline_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  # a stopped server sends no alerts: keep one machine running at all times
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

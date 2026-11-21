@@ -15,7 +15,7 @@ Vite proxy (`apps/web/vite.config.ts`, once the web app exists):
 ```ts
 server: { proxy: { "/api": "http://localhost:8787" } }
 ```
-Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay same-origin.
+Production: Vercel rewrites `/api/:path*` to the server on Fly.io, so cookies stay same-origin.
 
 ## Real server
 
