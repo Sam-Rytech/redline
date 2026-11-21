@@ -35,6 +35,7 @@ Every POST, PATCH and DELETE must send `Origin` equal to the server's `PUBLIC_OR
 Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with debt 0 that still hold collateral (fully redeemed, unclaimed) and their total collateral in BCH.
 `summary.total` counts every loan output, stranded ones included. For the "N active loans" and "Total Collateral" figures that stats.paryonusd.com shows, use `summary.activeCount` and `summary.activeCollateralBch` (loans with debt above 0).
 `LoanView.paryonUrl` is `https://paryonusd.com/app` for every loan; the Paryon dApp has no per-loan links.
+`LoanView.claimUrl` is the same link for a stranded loan and `null` for every other loan: the owner claims the leftover BCH by closing the loan with its loan key in the Paryon app (gate GL2).
 
 | Method | Path | Auth | Returns |
 |---|---|---|---|
@@ -112,7 +113,6 @@ Each becomes a type change, announced in the team chat, when it is built.
 |---|---|
 | `LoansResponse.stale: boolean` and `dataAgeSeconds: number` | the data can be old and the screen must say so; alerts are not sent from stale data |
 | `Invoice` response adds `terms: { priceUsd, days: 30, renews: false }` | the pay button shows the terms beside it |
-| `LoanView.claimUrl: string \| null` for stranded loans | link to claim the leftover BCH in the official Paryon app |
 
 ## Mock-only behaviour
 

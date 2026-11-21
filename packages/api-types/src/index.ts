@@ -53,6 +53,11 @@ export interface LoanView {
   stranded: boolean;
   /** Deep link to act on this loan in the official dApp */
   paryonUrl: string;
+  /**
+   * For a stranded loan: where its owner claims the leftover BCH (the Paryon app; closing the
+   * loan with its loan key releases the collateral). null for every other loan.
+   */
+  claimUrl: string | null;
 }
 
 export interface LoansSummary {
