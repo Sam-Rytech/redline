@@ -30,5 +30,5 @@
 @media (max-width: 700px) {
   .readout { position: relative; right: auto; top: auto; text-align: left; grid-row: 3; margin-top: var(--space-6); }
   .readout div { justify-content: flex-start; }
-  .object { top: 50%; }
+  .object { top: 48%; width: 175vw; }
 }
