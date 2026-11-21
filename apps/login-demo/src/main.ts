@@ -1,10 +1,12 @@
 import "./style.css";
 import QRCode from "qrcode";
-import type { ApiError, MeResponse } from "@redline/api-types";
+import type { ApiError, InvoiceQuote, MeResponse } from "@redline/api-types";
 import {
   LoginError,
+  PaymentError,
   connectWallet,
   deriveAddresses,
+  payProPass,
   txidOf,
   wizardLogin,
   type WalletConnection,
@@ -34,6 +36,15 @@ const ui = {
   meJson: $("me-json"),
   txid: $("txid"),
   g1: $("g1"),
+  pay: $("pay"),
+  quote: $("quote"),
+  terms: $("terms"),
+  proStatus: $("pro-status"),
+  buy: $<HTMLButtonElement>("buy"),
+  payResult: $("pay-result"),
+  payTxid: $("pay-txid"),
+  payLink: $("pay-link"),
+  payMe: $("pay-me"),
   dob: $<HTMLInputElement>("dob"),
   age: $<HTMLButtonElement>("age"),
   ageStatus: $("age-status"),
@@ -45,7 +56,7 @@ function log(line: string) {
   ui.log.textContent = `${t}  ${line}\n${ui.log.textContent ?? ""}`;
 }
 const describe = (e: unknown) =>
-  e instanceof LoginError ? `[${e.code}] ${e.message}` : e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  e instanceof LoginError || e instanceof PaymentError ? `[${e.code}] ${e.message}` : e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 
 let conn: WalletConnection | null = null;
 let signing: AbortController | null = null;
@@ -61,6 +72,7 @@ function resetWalletUi() {
   ui.connect.disabled = false;
   ui.disconnect.disabled = true;
   ui.signin.disabled = false;
+  ui.pay.hidden = true;
 }
 
 async function disconnect(reason: string) {
@@ -191,6 +203,7 @@ ui.signin.addEventListener("click", async () => {
     });
     log("signed in");
     showResult(me, txid);
+    void showPay();
   } catch (e) {
     log(ctrl.signal.aborted ? "Sign-in cancelled (wallet disconnected)" : `sign-in failed: ${describe(e)}`);
     if (txid) showResult(null, txid);
@@ -216,6 +229,98 @@ function showResult(me: MeResponse | null, txid: string | null) {
     ui.g1.append(a, " (G1: did the wallet broadcast it?)");
   }
 }
+
+// ---------- 30-day Pro pass ----------
+let paying = false;
+
+/** Pro status from /me; Buy is disabled while a pass is running. True when Pro is active. */
+async function refreshPro(): Promise<boolean> {
+  try {
+    const me = (await fetch(`${API}/me`, { credentials: "include" }).then((r) => r.json())) as MeResponse | ApiError;
+    if ("error" in me) {
+      ui.proStatus.textContent = `unknown — ${me.error.code}`;
+      return false;
+    }
+    ui.payMe.textContent = JSON.stringify(me, null, 2);
+    ui.proStatus.textContent = me.pro && me.proUntil ? `Pro active until ${new Date(me.proUntil).toLocaleString()}` : "Free plan";
+    ui.buy.disabled = me.pro;
+    return me.pro;
+  } catch (e) {
+    ui.proStatus.textContent = `unknown — ${describe(e)}`;
+    return false;
+  }
+}
+
+async function showPay() {
+  ui.pay.hidden = false;
+  ui.quote.textContent = "(loading…)";
+  if (await refreshPro()) {
+    ui.quote.textContent = "(not needed while Pro is active)";
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/invoices/quote`, { credentials: "include" });
+    const body = (await res.json()) as InvoiceQuote | ApiError;
+    if ("error" in body) {
+      ui.quote.textContent = `unavailable — ${body.error.code}: ${body.error.message}`;
+      ui.buy.disabled = true;
+      return;
+    }
+    const bch = (body.amountSats / 1e8).toFixed(8).replace(/0+$/, "");
+    ui.quote.textContent = `${body.amountSats.toLocaleString()} sats to ${body.merchantAddress}`;
+    // docs/COMPLIANCE.md: the terms sit beside the pay button, not behind a link
+    ui.terms.textContent = `Pro pass: 0.25 USD, paid once in BCH (about ${bch} BCH at today's price). Lasts 30 days. Does not renew. You are not charged again. Nothing to cancel.`;
+    ui.buy.disabled = false;
+  } catch (e) {
+    ui.quote.textContent = `unavailable — ${describe(e)}`;
+  }
+}
+
+ui.buy.addEventListener("click", async () => {
+  if (!conn || paying) return;
+  const c = conn;
+  paying = true;
+  ui.buy.disabled = true;
+  ui.payResult.hidden = true;
+  const ctrl = new AbortController();
+  signing = ctrl;
+  try {
+    const inv = await payProPass({
+      manager: c.manager,
+      apiBase: API,
+      signal: ctrl.signal,
+      onStep: (step, detail) => log(`pay ${step}${detail ? ` — ${detail}` : ""}`),
+    });
+    log(`Pro pass paid: invoice ${inv.id}, txid ${inv.txid}`);
+    ui.payResult.hidden = false;
+    ui.payTxid.textContent = inv.txid ?? "(none)";
+    ui.payLink.textContent = "";
+    if (inv.txid) {
+      const a = document.createElement("a");
+      a.href = `https://blockchair.com/bitcoin-cash/transaction/${inv.txid}`;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = a.href;
+      ui.payLink.append("Explorer: ", a);
+    }
+  } catch (e) {
+    if (e instanceof PaymentError && e.code === "already_paid") {
+      // the server found an earlier payment: that is a success
+      log(`Already paid ✓ — ${e.message}`);
+      ui.payResult.hidden = false;
+      ui.payTxid.textContent = /txid ([0-9a-f]{64})/.exec(e.message)?.[1] ?? "(see log)";
+      ui.payLink.textContent = "Already paid ✓";
+    } else {
+      log(ctrl.signal.aborted ? "Payment cancelled (wallet disconnected)" : `payment failed: ${describe(e)}`);
+    }
+  } finally {
+    if (signing === ctrl) signing = null;
+    paying = false;
+    ui.buy.disabled = false;
+    await refreshPro();
+  }
+});
+
 
 async function call(method: "GET" | "POST", path: string) {
   try {
