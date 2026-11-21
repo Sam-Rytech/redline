@@ -1,25 +1,20 @@
 import type { LoansResponse } from "@redline/api-types";
 import { PRO_PASS_DAYS, PRO_PASS_USD } from "@redline/api-types";
-import { motion, useScroll, useSpring, useTransform } from "motion/react";
 import { useLayoutEffect, useRef, useState } from "react";
 import plugSrc from "../../assets/tacho/plug.webp";
 import { fmtBch, fmtInt, fmtPusd } from "../../lib/format";
-import { useReducedMotion } from "../../lib/useReducedMotion";
 import { ButtonLink } from "../../ui/Button";
 import s from "./CordRun.module.css";
 
 // The cord's route as fractions of the section (x of width, y of height), from the gauge to the plug.
-function cordPath(w: number, h: number) {
+function cordPath(w: number, h: number, startX: number) {
   const P = (x: number, y: number) => `${(x * w).toFixed(1)} ${(y * h).toFixed(1)}`;
-  return `M${P(0, 0.02)} C${P(0.2, 0.02)} ${P(0.4, 0.06)} ${P(0.46, 0.14)} S${P(0.88, 0.3)} ${P(0.86, 0.42)} S${P(0.12, 0.56)} ${P(0.14, 0.68)} S${P(0.5, 0.82)} ${P(0.5, 0.94)} L${P(0.5, 1)}`;
+  return `M${startX.toFixed(1)} -2 C${startX.toFixed(1)} ${(0.08 * h).toFixed(1)} ${P(0.4, 0.06)} ${P(0.46, 0.14)} S${P(0.88, 0.3)} ${P(0.86, 0.42)} S${P(0.12, 0.56)} ${P(0.14, 0.68)} S${P(0.5, 0.82)} ${P(0.5, 0.94)} L${P(0.5, 1)}`;
 }
 
 /** Below the gauge: its cord runs down through the facts and ends in a plug beside Connect wallet. */
-export function CordRun({ data }: { data: LoansResponse | null }) {
+export function CordRun({ data, startX }: { data: LoansResponse | null; startX: number }) {
   const ref = useRef<HTMLElement>(null);
-  const reduce = useReducedMotion();
-  const { scrollYProgress } = useScroll({ target: ref, offset: ["start 70%", "end end"] });
-  const drawn = useSpring(useTransform(scrollYProgress, [0, 0.82], [0, 1]), { stiffness: 120, damping: 30 });
   const sum = data?.summary;
   const plugRef = useRef<HTMLImageElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
@@ -41,43 +36,56 @@ export function CordRun({ data }: { data: LoansResponse | null }) {
     <section ref={ref} className={s.run}>
       {size && (
         <svg className={s.cord} width={size.w} height={size.h} viewBox={`0 0 ${size.w} ${size.h}`} aria-hidden="true">
-          <motion.path d={cordPath(size.w, size.h)} className={s.cordShadow} style={reduce ? undefined : { pathLength: drawn }} />
-          <motion.path d={cordPath(size.w, size.h)} className={s.cordBody} style={reduce ? undefined : { pathLength: drawn }} />
+          <path d={cordPath(size.w, size.h, startX)} className={s.cordShadow} />
+          <path d={cordPath(size.w, size.h, startX)} className={s.cordBody} />
         </svg>
       )}
 
       <article className={`${s.block} ${s.left}`}>
-        <p className={`${s.kicker} mono`}>05 What Redline reads</p>
-        <h2 className={`${s.title} display`}>Every loan on the chain.</h2>
+        <p className={s.num}>05.</p>
+        <p className={`${s.kicker} mono`}>On-chain monitoring</p>
+        <h2 className={`${s.title} display`}>See the risk across every ParyonUSD loan.</h2>
         <dl className={`${s.facts} num`}>
           <div><dt className="mono">Active loans</dt><dd>{sum ? fmtInt(sum.total) : "--"}</dd></div>
-          <div><dt className="mono">Within 20% of the line</dt><dd>{sum ? fmtInt(sum.within20pct) : "--"}</dd></div>
+          <div><dt className="mono">Within 20% of liquidation</dt><dd>{sum ? fmtInt(sum.within20pct) : "--"}</dd></div>
           <div><dt className="mono">Borrowed</dt><dd>{sum ? fmtPusd(sum.totalDebtPusd) : "--"}</dd></div>
-          <div><dt className="mono">Locked</dt><dd>{sum ? fmtBch(Math.round(sum.totalCollateralBch)) : "--"}</dd></div>
+          <div><dt className="mono">Locked collateral</dt><dd>{sum ? fmtBch(Math.round(sum.totalCollateralBch)) : "--"}</dd></div>
         </dl>
-        <p className={s.body}>Read straight from Bitcoin Cash mainnet, block by block. No account needed to look.</p>
-        <ButtonLink to="/loans" variant="quiet">Look up any loan</ButtonLink>
+        <p className={s.body}>Redline reads loan data directly from Bitcoin Cash, so you can check the whole market without connecting a wallet. Figures update with every block.</p>
+        <ButtonLink to="/loans" variant="quiet">Explore loans</ButtonLink>
       </article>
 
       <article className={`${s.block} ${s.right}`}>
-        <p className={`${s.kicker} mono`}>06 Left behind</p>
-        <h2 className={`${s.title} display`}>
-          {sum ? fmtBch(Math.round(sum.strandedBch * 10) / 10) : "BCH"} nobody has claimed.
-        </h2>
+        <p className={s.num}>06.</p>
+        <p className={`${s.kicker} mono`}>Unclaimed collateral</p>
+        <h2 className={`${s.title} display`}>You may still have BCH to claim.</h2>
         <p className={s.body}>
-          {sum ? `${fmtInt(sum.strandedCount)} loans` : "Some loans"} were paid off by redemption but still hold their collateral.
-          If one is yours, Redline shows you where it is.
+          Some loans were repaid through redemption, but their remaining collateral hasn't been claimed
+          {sum ? ` (${fmtInt(sum.strandedCount)} loans holding ${fmtBch(Math.round(sum.strandedBch * 10) / 10)} right now)` : ""}. Redline helps
+          you check whether any of it belongs to you.
         </p>
-        <ButtonLink to="/loans?stranded=1" variant="quiet">Find stranded BCH</ButtonLink>
+        <ButtonLink to="/loans?stranded=1" variant="quiet">Find unclaimed BCH</ButtonLink>
       </article>
 
       <article className={`${s.block} ${s.left}`}>
-        <p className={`${s.kicker} mono`}>07 Free and Pro</p>
-        <h2 className={`${s.title} display`}>One loan free. Every loan with Pro.</h2>
-        <p className={s.body}>Free watches one loan with liquidation alerts. The Pro pass watches every loan you hold, with every alert rule.</p>
+        <p className={s.num}>07.</p>
+        <p className={`${s.kicker} mono`}>Plans</p>
+        <h2 className={`${s.title} display`}>Monitor one loan for free, or all your loans with Pro.</h2>
+        <div className={s.plans}>
+          <div className={s.plan}>
+            <p className="mono">Free</p>
+            <p className={s.price}>$0</p>
+            <p className={s.body}>Monitor one loan with liquidation alerts.</p>
+          </div>
+          <div className={s.plan}>
+            <p className="mono">Pro</p>
+            <p className={s.price}>${PRO_PASS_USD.toFixed(2)}</p>
+            <p className={s.body}>Monitor all your loans with every alert rule.</p>
+          </div>
+        </div>
         <p className={s.terms}>
-          Pro pass: {PRO_PASS_USD.toFixed(2)} USD, paid once in BCH. Lasts {PRO_PASS_DAYS} days. Does not renew. You are not charged again.
-          Nothing to cancel.
+          Pro pass: {PRO_PASS_USD.toFixed(2)} USD, paid once in BCH. Lasts {PRO_PASS_DAYS} days. One-time payment, no auto-renewal: you are
+          not charged again and there is nothing to cancel.
         </p>
         <ButtonLink to="/pro">See the Pro pass</ButtonLink>
       </article>
@@ -85,8 +93,8 @@ export function CordRun({ data }: { data: LoansResponse | null }) {
       <div className={s.end}>
         <img ref={plugRef} className={s.plug} src={plugSrc} alt="" />
         <div className={s.connect}>
-          <h2 className={`${s.title} display`}>Plug in your loan.</h2>
-          <p className={s.body}>Sign in with your BCH wallet. Redline asks you to sign a message, never to send anything.</p>
+          <h2 className={`${s.title} display`}>Start monitoring your BCH loans.</h2>
+          <p className={s.body}>Connect your wallet to find your loans and set up Telegram alerts.</p>
           <ButtonLink to="/sign-in">Connect wallet</ButtonLink>
         </div>
       </div>

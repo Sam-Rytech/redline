@@ -1,5 +1,5 @@
-import { AnimatePresence, motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
-import { useRef, useState } from "react";
+import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "motion/react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { heat, LIQUIDATION_RATIO } from "../../lib/gauge";
 import { fmtUsd } from "../../lib/format";
 import { useReducedMotion } from "../../lib/useReducedMotion";
@@ -11,14 +11,14 @@ const END_RATIO = 96;
 
 type Step = { below: number; kicker: string; title: string; body: string };
 const STEPS: Step[] = [
-  { below: Infinity, kicker: "01 The loan", title: "Lock BCH. Borrow dollars.", body: "ParyonUSD lends you PUSD, a dollar stablecoin, against BCH you lock up. The gauge reads your collateral ratio: what the BCH is worth against what you owe." },
-  { below: 165, kicker: "02 The price", title: "BCH falls. So does your ratio.", body: "Every dollar off the BCH price moves the needle toward the red zone. The protocol itself sends no warning." },
-  { below: 135, kicker: "03 The alarm", title: "Redline lights up first.", body: "Before the needle reaches 110%, the lamp comes on and a Telegram message tells you how far you are from the line and at what BCH price you lose the collateral." },
-  { below: LIQUIDATION_RATIO, kicker: "04 The line", title: "At 110%, the loan is gone.", body: "Paryon liquidates at 110% and the collateral is gone. With Redline you heard about it three times before that, early enough to add BCH or repay." },
+  { below: Infinity, kicker: "01 · The loan", title: "Borrow PUSD using your BCH.", body: "ParyonUSD lets you lock BCH as collateral and borrow PUSD against it. Your collateral ratio tells you how much your BCH is worth compared with what you owe." },
+  { below: 165, kicker: "02 · The price", title: "When BCH falls, your loan becomes riskier.", body: "As the price of BCH drops, your collateral ratio falls too. If it reaches the liquidation threshold, your collateral is at risk. ParyonUSD doesn't send liquidation warnings." },
+  { below: 135, kicker: "03 · The alert", title: "Get notified before liquidation.", body: "Redline watches your loan and sends Telegram alerts as it approaches the liquidation threshold, including the BCH price that would put your collateral at risk." },
+  { below: LIQUIDATION_RATIO, kicker: "04 · Liquidation", title: "At 110%, your collateral can be liquidated.", body: "Once the collateral ratio reaches the protocol's liquidation threshold, the protocol can liquidate your collateral. Redline warns you beforehand so you can act while there is still time." },
 ];
 
 /** Scroll drives a falling BCH price: the needle climbs, the lamp lights, the stripes cross at 110%. */
-export function GaugeRun({ priceUsd }: { priceUsd: number }) {
+export function GaugeRun({ priceUsd, onCordX }: { priceUsd: number; onCordX: (x: number) => void }) {
   const ref = useRef<HTMLElement>(null);
   const reduce = useReducedMotion();
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
@@ -29,12 +29,38 @@ export function GaugeRun({ priceUsd }: { priceUsd: number }) {
   const price = priceUsd * (ratio / START_RATIO);
   const crossed = ratio < LIQUIDATION_RATIO;
   const step = [...STEPS].reverse().find((x) => ratio < x.below) ?? STEPS[0]!;
-  const objX = useTransform(scrollYProgress, [0, 0.5, 1], reduce ? ["0%", "0%", "0%"] : ["-6%", "4%", "-2%"]);
-  const objRotate = useTransform(scrollYProgress, [0, 1], reduce ? [0, 0] : [-4, 3]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const objRef = useRef<HTMLDivElement>(null);
+  const [cord, setCord] = useState<string | null>(null);
+
+  // The cable leaves the photo at its left edge, 63% down. The cord runs from there to the
+  // bottom of the stage, where the next section picks it up at the same x.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const stage = stageRef.current?.getBoundingClientRect();
+      const obj = objRef.current?.getBoundingClientRect();
+      if (!stage || !obj) return;
+      const sx = obj.left - stage.left + 2;
+      const sy = obj.top - stage.top + obj.height * 0.63;
+      const ex = Math.max(28, sx - 70);
+      const ey = stage.height + 2;
+      setCord(`M${sx} ${sy} C${sx - 60} ${sy + 10} ${ex} ${sy + 60} ${ex} ${Math.min(ey, sy + 160)} L${ex} ${ey}`);
+      onCordX(ex);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (stageRef.current) ro.observe(stageRef.current);
+    return () => ro.disconnect();
+  }, [onCordX]);
 
   return (
     <section ref={ref} className={s.run} aria-label="How a ParyonUSD loan reaches the red line">
-      <div className={s.stage}>
+      <div className={s.stage} ref={stageRef}>
+        {cord && (
+          <svg className={s.innerCord} aria-hidden="true">
+            <path d={cord} />
+          </svg>
+        )}
         <div className={s.grid} aria-hidden="true" />
         <div className={s.glow} style={{ opacity: heat(ratio) }} aria-hidden="true" />
         <AnimatePresence>
@@ -50,9 +76,9 @@ export function GaugeRun({ priceUsd }: { priceUsd: number }) {
           )}
         </AnimatePresence>
 
-        <motion.div className={s.object} style={{ x: objX, rotate: objRotate }}>
+        <div className={s.object} ref={objRef}>
           <Gauge ratio={ratio} spring={false} label={`Gauge at ${ratio.toFixed(0)}% collateral ratio`} />
-        </motion.div>
+        </div>
 
         <dl className={`${s.readout} mono num`} aria-live="off">
           <div><dt>BCH</dt><dd>{fmtUsd(price)}</dd></div>
@@ -86,9 +112,9 @@ export function GaugeRun({ priceUsd }: { priceUsd: number }) {
               transition={{ type: "spring", stiffness: 300, damping: 26 }}
               role="status"
             >
-              <span className="mono">Telegram · Redline</span>
-              <strong>Loan 3f9a…c21e is {Math.max(0, Math.round((1 - LIQUIDATION_RATIO / ratio) * 100))}% from liquidation.</strong>
-              <span>Liquidates if BCH reaches {fmtUsd(priceUsd * (LIQUIDATION_RATIO / START_RATIO))}. Add BCH or repay to move back.</span>
+              <span className="mono">Example alert · Telegram</span>
+              <strong>Loan 3f9a…c21e: BCH can fall {Math.max(0, Math.round((1 - LIQUIDATION_RATIO / ratio) * 100))}% before liquidation.</strong>
+              <span>Liquidation price: {fmtUsd(priceUsd * (LIQUIDATION_RATIO / START_RATIO))} per BCH. Add BCH or repay part of the loan to raise your collateral ratio.</span>
             </motion.div>
           )}
         </AnimatePresence>

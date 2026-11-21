@@ -1,12 +1,12 @@
 import type { Invoice, InvoiceQuote, Utxo } from "@redline/api-types";
 import { PRO_PASS_DAYS, PRO_PASS_USD } from "@redline/api-types";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { api } from "../../lib/api";
 import { demoWalletEnabled } from "../../lib/demoWallet";
 import { useApi } from "../../lib/useApi";
 import { useMe } from "../../lib/useMe";
 import { Button } from "../../ui/Button";
-import { Sheet } from "../../ui/Sheet";
+import { Modal } from "../../ui/Modal";
 import { SignInPrompt } from "./SignInPrompt";
 import s from "./Account.module.css";
 
@@ -17,8 +17,9 @@ export function ProPass() {
   const quote = useApi<InvoiceQuote>(me && !me.pro ? "/invoices/quote" : null);
   const [pay, setPay] = useState<Pay>({ stage: "idle" });
   const bch = quote.data ? (quote.data.amountSats / 1e8).toFixed(6) : null;
+  const close = useCallback(() => setPay({ stage: "idle" }), []);
 
-  // Payment is never optimistic: the sheet shows a pending state until the server confirms.
+  // Payment is never optimistic: the modal shows a pending state until the server confirms.
   const start = async () => {
     setPay({ stage: "waiting" });
     try {
@@ -45,7 +46,7 @@ export function ProPass() {
         {me?.pro && <p className={s.body}>Pro is active until {me.proUntil ? new Date(me.proUntil).toLocaleDateString() : "the end of the pass"}.</p>}
         {me && !me.pro && (
           <div className={s.buy}>
-            <Button onClick={start} disabled={!demoWalletEnabled} aria-describedby="pro-terms">
+            <Button onClick={start} disabled={!demoWalletEnabled} state={pay.stage === "waiting" ? "working" : "idle"} aria-describedby="pro-terms">
               Pay {PRO_PASS_USD.toFixed(2)} USD in BCH
             </Button>
             <p id="pro-terms" className={s.terms}>
@@ -56,17 +57,29 @@ export function ProPass() {
           </div>
         )}
       </section>
-      <Sheet open={pay.stage !== "idle"} onClose={() => setPay({ stage: "idle" })} title="Pro pass payment">
-        {pay.stage === "waiting" && <p className={s.body} role="status">Approve the payment in your wallet. This page waits for the network to confirm it.</p>}
+      <Modal
+        open={pay.stage !== "idle"}
+        onClose={close}
+        tone={pay.stage === "paid" ? "done" : pay.stage === "failed" ? "bad" : "wait"}
+        title={pay.stage === "paid" ? "Pro is on" : pay.stage === "failed" ? "Payment didn't go through" : "Approve in your wallet"}
+        actions={
+          pay.stage === "waiting" ? (
+            <Button variant="secondary" onClick={close}>Hide</Button>
+          ) : (
+            <Button onClick={close}>{pay.stage === "paid" ? "Done" : "Close"}</Button>
+          )
+        }
+      >
+        {pay.stage === "waiting" && <p role="status">This page waits for the network to confirm the payment.</p>}
         {pay.stage === "paid" && (
-          <div className={s.receipt}>
-            <p className={s.body}>Paid. Pro runs for {PRO_PASS_DAYS} days and does not renew.</p>
+          <>
+            <p>Pro runs for {PRO_PASS_DAYS} days and does not renew.</p>
             <p className="mono">Receipt {pay.invoice.id}</p>
             {pay.invoice.txid && <p className="mono">Transaction {pay.invoice.txid.slice(0, 16)}…</p>}
-          </div>
+          </>
         )}
-        {pay.stage === "failed" && <p className={s.err} role="alert">The payment did not go through: {pay.message}. No BCH left your wallet.</p>}
-      </Sheet>
+        {pay.stage === "failed" && <p role="alert">{pay.message}. No BCH left your wallet.</p>}
+      </Modal>
     </main>
   );
 }

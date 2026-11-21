@@ -33,19 +33,22 @@ export function Hero({ data }: { data: LoansResponse | null }) {
         fetchPriority="high"
       />
       <h1 id="hero-title" className={`${s.title} display`}>
-        <span className={s.top}>Know<br />before</span>
-        <span className={s.bottom}>the red</span>
+        <span className={s.top}>Don't let<br />liquidation</span>
+        <span className={s.bottom}>catch you<br />off guard.</span>
       </h1>
       <dl className={`${s.readout} mono num`}>
         <div><dt>Loans watched</dt><dd>{data ? fmtInt(data.summary.total) : "--"}</dd></div>
         <div><dt>Lowest ratio</dt><dd>{lowest !== undefined && lowest !== null ? fmtPct(lowest) : "--"}</dd></div>
         <div><dt>BCH</dt><dd>{data ? fmtUsd(data.priceUsd) : "--"}</dd></div>
       </dl>
+      <p className={s.lead}>
+        Get Telegram alerts before your ParyonUSD loan reaches liquidation, so you have time to add collateral or repay.
+      </p>
       <div className={s.actions}>
-        <ButtonLink to="/sign-in">Watch my loan</ButtonLink>
-        <ButtonLink to="/loans" variant="quiet">See every loan</ButtonLink>
+        <ButtonLink to="/sign-in" beckon>Watch my loan</ButtonLink>
+        <ButtonLink to="/loans" variant="quiet">Explore loans</ButtonLink>
       </div>
-      <p className={`${s.sub} mono`}>Telegram alerts for ParyonUSD loans</p>
+      <p className={`${s.sub} mono`}>Liquidation monitoring for ParyonUSD</p>
     </section>
   );
 }

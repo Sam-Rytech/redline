@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { heat, lampLit, ratioToAngle } from "../src/lib/gauge";
+import { heat, lampLit, ratioToAngle, ratioToTrack } from "../src/lib/gauge";
 
 describe("ratioToAngle", () => {
   it("hits the printed numerals", () => {
@@ -32,5 +32,17 @@ describe("lamp and heat", () => {
     expect(heat(250)).toBe(0);
     expect(heat(110)).toBe(1);
     expect(heat(145)).toBeCloseTo(0.5);
+  });
+});
+
+describe("ratioToTrack", () => {
+  it("runs 0 at 300% to 1 at 100% and clamps outside", () => {
+    expect(ratioToTrack(300)).toBe(0);
+    expect(ratioToTrack(100)).toBe(1);
+    expect(ratioToTrack(400)).toBe(0);
+    expect(ratioToTrack(80)).toBe(1);
+  });
+  it("puts 200% at the dial's top centre", () => {
+    expect(ratioToTrack(200)).toBeCloseTo(0.5, 1);
   });
 });

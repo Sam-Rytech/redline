@@ -1,12 +1,12 @@
 import { Link } from "react-router";
-import { Wordmark } from "../../ui/Wordmark";
+import { Logo } from "../../ui/Logo";
 import s from "./Shell.module.css";
 
 export function Footer() {
   return (
     <footer className={s.footer}>
       <div className={s.footTop}>
-        <Wordmark size={40} />
+        <span className={s.footLogo}><Logo size={40} /></span>
         <p className={s.footNote}>Independent project. Not affiliated with ParyonUSD. Not financial advice.</p>
       </div>
       <nav className={`${s.footLinks} mono`} aria-label="Legal">

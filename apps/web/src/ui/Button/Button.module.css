@@ -1,15 +1,56 @@
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
-  min-height: var(--target-min); padding: 0 var(--space-5);
-  border-radius: var(--radius-control); border: 0; cursor: pointer;
-  font-family: var(--font-display); font-weight: 800; font-size: var(--text-body);
-  text-decoration: none; white-space: nowrap;
-  transition: transform var(--dur-state) var(--ease-out), background var(--dur-state) var(--ease-out);
+/* Pill with a round cap. On hover the cap glides to the other end and turns, and the pill fills red. */
+.pill {
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--target-min); padding: 4px 52px 4px 22px; border-radius: var(--radius-pill);
+  border: 1px solid transparent; cursor: pointer; overflow: hidden; white-space: nowrap; user-select: none;
+  font-family: var(--font-sans); font-size: 0.9375rem; font-weight: 600; text-decoration: none;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  transition: padding 450ms var(--spring), background 400ms ease, color 400ms ease,
+    border-color 400ms ease, box-shadow 400ms ease, transform 160ms ease;
 }
-.btn:active { transform: scale(0.97); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.primary { background: var(--action-bg); color: var(--action-label); }
-.primary:hover { background: color-mix(in srgb, var(--action-bg) 88%, black); }
-.secondary { background: var(--label); color: var(--bg-base); }
-.quiet { background: transparent; color: var(--label); box-shadow: inset 0 0 0 1.5px var(--separator); }
-.quiet:hover { box-shadow: inset 0 0 0 1.5px var(--label-3); }
+.label { position: relative; z-index: 1; }
+.cap {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%) rotate(0deg);
+  display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  transition: right 450ms var(--spring), transform 450ms var(--spring), background 400ms ease, color 400ms ease;
+}
+.pill:active:not(:disabled) { transform: scale(0.97); }
+.pill:disabled { opacity: 0.45; cursor: not-allowed; }
+.pill:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+
+.primary { background: var(--label); color: var(--bg-base); }
+.primary .cap { background: var(--brand-red); color: #F5F1E8; }
+.primary:hover:not(:disabled) {
+  padding: 4px 22px 4px 52px; background: var(--action-bg); color: var(--action-label);
+  box-shadow: 0 0 24px -2px rgb(229 50 31 / 0.5), 0 4px 12px rgb(229 50 31 / 0.22);
+}
+.primary:hover:not(:disabled) .cap { right: calc(100% - 39px); transform: translateY(-50%) rotate(-45deg); background: #F5F1E8; color: var(--action-bg); }
+
+.secondary, .quiet { background: transparent; color: var(--label); border-color: var(--separator); box-shadow: none; }
+.secondary .cap, .quiet .cap { background: var(--bg-base); color: var(--label-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.secondary:hover:not(:disabled), .quiet:hover:not(:disabled) {
+  padding: 4px 22px 4px 52px; background: var(--bg-elevated); border-color: var(--brand-red); color: var(--brand-red-text);
+  box-shadow: 0 0 20px -4px rgb(229 50 31 / 0.25);
+}
+.secondary:hover:not(:disabled) .cap, .quiet:hover:not(:disabled) .cap {
+  right: calc(100% - 39px); transform: translateY(-50%) rotate(-45deg); background: var(--brand-red); color: #F5F1E8; box-shadow: none;
+}
+
+.pill[data-state="done"] { background: var(--risk-safe); color: #fff; border-color: transparent; }
+.pill[data-state="done"] .cap { background: #fff; color: var(--risk-safe); }
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: no-preference) {
+  .beckon .cap svg { animation: nudge 8s 4s infinite; }
+  .beckon:hover .cap svg { animation: none; }
+}
+@keyframes nudge {
+  0%, 84%, 100% { transform: translateX(0); }
+  88%, 96% { transform: translateX(3px); }
+  92% { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pill, .cap { transition-duration: 0.01ms; }
+}

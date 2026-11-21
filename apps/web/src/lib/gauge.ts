@@ -31,6 +31,13 @@ export function ratioToAngle(ratio: number | null): number {
   return MIN_ANGLE;
 }
 
+/** Position on a straight track, 0 at 300% and 1 at 100%, spaced like the dial so both read alike. */
+export function ratioToTrack(ratio: number | null): number {
+  const lo = SCALE[0]![1];
+  const hi = SCALE[SCALE.length - 1]![1];
+  return Math.max(0, Math.min(1, (ratioToAngle(ratio) - lo) / (hi - lo)));
+}
+
 /** The shift lamp lights inside this margin above the liquidation ratio. */
 export function lampLit(ratio: number | null): boolean {
   return ratio !== null && ratio < LIQUIDATION_RATIO + 15;

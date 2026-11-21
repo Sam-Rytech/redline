@@ -1,61 +1,72 @@
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { useReducedMotion } from "../../lib/useReducedMotion";
+import { RIBBON_D, RIBBON_START, RIBBON_VIEWBOX, RIBBON_WIDTH } from "../Logo";
 import s from "./Loader.module.css";
 
-const KEY = "rl_loader_seen";
+const LINE = 0.55;
+const MARK = 1.1;
+const HOLD = 0.4;
+const LIFT = 0.75;
 
-function seen(): boolean {
-  try {
-    return sessionStorage.getItem(KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-/** Brand loader, once per session: the red line draws, the lamp blinks, the page rises. */
+/**
+ * Preloader on every full page load: a red line draws from the left edge at mid-height,
+ * runs into the mark and writes the whole ribbon in one stroke, then the screen slides up.
+ */
 export function Loader() {
   const reduce = useReducedMotion();
-  const [show, setShow] = useState(() => !seen());
+  const [phase, setPhase] = useState<"draw" | "lift" | "gone">(reduce ? "gone" : "draw");
+  const [vw, vh] = [window.innerWidth, window.innerHeight];
 
   useEffect(() => {
-    if (!show) return;
-    try {
-      sessionStorage.setItem(KEY, "1");
-    } catch {
-      /* storage blocked: the loader still runs once per page load */
-    }
-    const t = setTimeout(() => setShow(false), reduce ? 0 : 1300);
-    return () => clearTimeout(t);
-  }, [show, reduce]);
+    if (reduce) return;
+    const a = setTimeout(() => setPhase("lift"), (LINE + MARK + HOLD) * 1000);
+    const b = setTimeout(() => setPhase("gone"), (LINE + MARK + HOLD + LIFT) * 1000 + 50);
+    return () => {
+      clearTimeout(a);
+      clearTimeout(b);
+    };
+  }, [reduce]);
+
+  if (phase === "gone") return null;
+
+  // Fit the mark to about 40% of the screen height, centred; its start point sits on the mid line.
+  const k = Math.min(vh * 0.4, vw * 0.55) / RIBBON_VIEWBOX.h;
+  const tx = vw / 2 - (RIBBON_VIEWBOX.x + RIBBON_VIEWBOX.w / 2) * k;
+  const ty = vh / 2 - RIBBON_START.y * k;
+  const joinX = tx + RIBBON_START.x * k;
 
   return (
-    <AnimatePresence>
-      {show && !reduce && (
-        <motion.div
-          className={s.loader}
-          initial={{ clipPath: "inset(0 0 0 0)" }}
-          exit={{ clipPath: "inset(0 0 100% 0)" }}
-          transition={{ duration: 0.45, ease: [0.4, 0, 1, 1] }}
-          aria-hidden="true"
-        >
-          <div className={s.track}>
-            <motion.span
-              className={s.line}
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={{ duration: 0.7, ease: [0.2, 0, 0, 1] }}
+    <motion.div
+      className={s.root}
+      aria-hidden="true"
+      animate={phase === "lift" ? { y: "-100%" } : { y: 0 }}
+      transition={{ duration: LIFT, ease: [0.7, 0, 0.2, 1] }}
+    >
+      <svg width={vw} height={vh} className={s.svg}>
+        <g fill="none" stroke="var(--brand-red)" strokeLinejoin="round" strokeLinecap="butt">
+          <motion.path
+            d={`M0 ${vh / 2} H${joinX}`}
+            strokeWidth={RIBBON_WIDTH * k}
+            strokeLinecap="round"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ duration: LINE, ease: [0.4, 0, 0.7, 1] }}
+          />
+          <g transform={`translate(${tx} ${ty}) scale(${k})`}>
+            <motion.path
+              d={RIBBON_D}
+              strokeWidth={RIBBON_WIDTH}
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{
+                pathLength: { delay: LINE, duration: MARK, ease: [0.3, 0, 0.3, 1] },
+                opacity: { delay: LINE, duration: 0.01 },
+              }}
             />
-            <motion.span
-              className={s.lamp}
-              initial={{ opacity: 0.25 }}
-              animate={{ opacity: [0.25, 1, 0.3, 1] }}
-              transition={{ delay: 0.6, duration: 0.6, times: [0, 0.3, 0.6, 1] }}
-            />
-          </div>
-          <span className={`${s.word} mono`}>Redline</span>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </g>
+        </g>
+      </svg>
+    </motion.div>
   );
 }

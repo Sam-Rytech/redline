@@ -42,8 +42,10 @@
   --radius-chip: 6px;   /* chips, badges */
   --radius-control: 10px; /* buttons, inputs */
   --radius-card: 14px;  /* loan cards, list groups */
-  --radius-sheet: 20px; /* bottom sheets, modals */
+  --radius-sheet: 20px; /* bottom sheets */
+  --radius-panel: 28px; /* ticket cards, modal cards */
   --radius-pill: 999px;
+  --ring: 14px;         /* frosted ring around a modal card */
 
   /* Elevation: 0 flat content, 1 sheet/popover, 2 modal. Cards are NOT elevated. */
   --elev-0: none;
@@ -84,6 +86,17 @@
 
   --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
   --glass-border: rgb(0 0 0 / 0.08);
+
+  --lift-layer: #D6D1C7;     /* the stone slab under a ticket card */
+  --scrim: rgb(20 16 14 / 0.42);
+  --ring-bg: rgb(255 253 249 / 0.45);
+  --ring-edge: rgb(255 255 255 / 0.6);
+}
+
+/* Shared by both themes once --lift-layer is set. */
+:root {
+  --lift: 0 16px 0 -8px var(--lift-layer);
+  --lift-raised: 0 22px 0 -8px var(--lift-layer);
 }
 
 /* Dark: follows the OS unless data-theme="light" is set; data-theme="dark" forces it. */
@@ -108,6 +121,10 @@
     --risk-critical: #FF7068;  --risk-critical-bg: #3B1614;
     --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
     --glass-border: rgb(255 255 255 / 0.10);
+    --lift-layer: #2E2B28;
+    --scrim: rgb(0 0 0 / 0.55);
+    --ring-bg: rgb(60 56 52 / 0.45);
+    --ring-edge: rgb(255 255 255 / 0.12);
   }
 }
 :root[data-theme="dark"] {
@@ -130,6 +147,10 @@
   --risk-critical: #FF7068;  --risk-critical-bg: #3B1614;
   --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
   --glass-border: rgb(255 255 255 / 0.10);
+  --lift-layer: #2E2B28;
+  --scrim: rgb(0 0 0 / 0.55);
+  --ring-bg: rgb(60 56 52 / 0.45);
+  --ring-edge: rgb(255 255 255 / 0.12);
 }
 
 /* Glass: navigation and controls only, never content surfaces. */

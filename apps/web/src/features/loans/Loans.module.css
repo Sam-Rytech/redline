@@ -15,23 +15,24 @@
 }
 .filter[aria-pressed="true"] { background: var(--label); color: var(--bg-base); }
 .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: var(--space-4); }
-.card { background: var(--bg-base); border-radius: var(--radius-card); overflow: hidden; }
-.cardLink { display: grid; grid-template-columns: 112px 1fr; gap: var(--space-4); align-items: center; padding: var(--space-4); text-decoration: none; min-height: 140px; }
+.card { composes: card from "../../ui/Card/Card.module.css"; padding: 0; }
+.cardLink { display: grid; gap: var(--space-2); align-content: start; padding: var(--space-5) var(--space-6) var(--space-6); text-decoration: none; min-height: 180px; border-radius: inherit; }
 .cardLink:hover .ratio { color: var(--brand-red-text); }
-.cardGauge { width: 112px; }
-.cardText { display: grid; gap: var(--space-1); min-width: 0; }
+.cardLink > :last-child:not(.meta) { margin-top: var(--space-3); }
 .cardHead { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); color: var(--label-2); }
 .ratio { font-family: var(--font-display); font-weight: 900; font-stretch: var(--display-stretch); font-size: 2.5rem; line-height: 1; transition: color var(--dur-state); }
 .meta { color: var(--label-2); font-size: var(--text-footnote); line-height: var(--lead-prose); }
 .stranded { color: var(--label); background: var(--bg-grouped); padding: 2px var(--space-2); border-radius: var(--radius-chip); }
-.skeleton { height: 140px; border-radius: var(--radius-card); background: var(--bg-base); opacity: 0.6; }
-.empty { grid-column: 1 / -1; display: grid; gap: var(--space-3); justify-items: start; padding: var(--space-8); background: var(--bg-base); border-radius: var(--radius-card); color: var(--label-2); }
-.detailRoot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: var(--space-4); }
-.backdrop { position: absolute; inset: 0; background: rgb(22 21 19 / 0.55); }
+.skeleton { height: 180px; border-radius: var(--radius-panel); background: var(--bg-base); box-shadow: var(--lift); opacity: 0.6; }
+.empty { composes: card from "../../ui/Card/Card.module.css"; grid-column: 1 / -1; display: grid; gap: var(--space-3); justify-items: start; color: var(--label-2); }
+.detailRoot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: calc(var(--space-4) + var(--ring)); }
+.backdrop { position: absolute; inset: 0; background: var(--scrim); backdrop-filter: blur(6px); }
+/* The loan's card grown into a modal card inside a frosted ring. */
 .detail {
-  position: relative; width: min(960px, 100%); max-height: calc(100dvh - 2 * var(--space-4)); overflow: auto;
-  background: var(--bg-base); border-radius: var(--radius-sheet); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--space-6); padding: var(--space-8); box-shadow: var(--elev-2);
+  position: relative; width: min(960px, 100%); max-height: calc(100dvh - 2 * (var(--space-4) + var(--ring))); overflow: auto;
+  background: var(--bg-elevated); border-radius: var(--radius-panel); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-6); padding: var(--space-8);
+  box-shadow: 0 0 0 var(--ring) var(--ring-bg), 0 0 0 calc(var(--ring) + 1px) var(--ring-edge), 0 40px 90px rgb(20 16 14 / 0.28);
 }
 .back {
   position: absolute; top: var(--space-4); left: var(--space-4); z-index: 2; width: var(--target-min); height: var(--target-min);
@@ -50,7 +51,6 @@
 .watch { display: grid; gap: var(--space-2); }
 .watchMsg { color: var(--label-2); font-size: var(--text-footnote); max-width: 32ch; line-height: var(--lead-prose); }
 @media (max-width: 760px) {
-  .detailRoot { padding: 0; place-items: end stretch; }
-  .detail { grid-template-columns: 1fr; border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; padding: var(--space-16) var(--space-5) calc(var(--space-8) + env(safe-area-inset-bottom)); max-height: 94dvh; }
+  .detail { grid-template-columns: 1fr; padding: var(--space-16) var(--space-5) var(--space-8); }
   .detailGauge { width: min(70vw, 300px); justify-self: center; }
 }

@@ -1,0 +1,37 @@
+.nav { position: sticky; top: 0; z-index: 40; border-bottom: 1px solid transparent; transition: background 200ms ease, border-color 200ms ease; }
+.scrolled {
+  background: color-mix(in srgb, var(--bg-grouped) 86%, transparent);
+  backdrop-filter: blur(12px) saturate(160%); border-bottom-color: var(--separator);
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .scrolled { background: var(--bg-grouped); backdrop-filter: none; } }
+.inner { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); padding: var(--space-4) var(--gutter); }
+.home { display: inline-flex; align-items: center; min-height: var(--target-min); text-decoration: none; }
+.links { display: flex; align-items: center; gap: var(--space-3); font-size: 0.9375rem; }
+.link { display: inline-flex; align-items: center; min-height: var(--target-min); padding: 0 var(--space-1); color: var(--label-2); text-decoration: none; transition: color var(--dur-state); }
+.link:hover { color: var(--brand-red-text); }
+.active { color: var(--label); font-weight: 600; }
+.bullet { width: 4px; height: 4px; border-radius: 50%; background: var(--label-3); opacity: 0.6; }
+.end { display: flex; align-items: center; gap: var(--space-2); }
+.toggle {
+  display: none; width: var(--target-min); height: var(--target-min); border-radius: 12px; cursor: pointer;
+  background: var(--bg-base); border: 1px solid var(--separator); place-items: center;
+}
+.bars, .bars::before { display: block; width: 18px; height: 2px; background: var(--label); border-radius: 2px; position: relative; transition: transform 220ms ease; }
+.bars::before { content: ""; position: absolute; top: 6px; left: 0; }
+.bars { transform: translateY(-3px); }
+.x { transform: translateY(0) rotate(45deg); }
+.x::before { transform: translateY(-6px) rotate(-90deg); }
+.menu {
+  display: grid; gap: var(--space-1); padding: var(--space-2) var(--gutter) var(--space-6);
+  border-top: 1px solid var(--separator); justify-items: start;
+}
+.menuLink {
+  display: flex; align-items: center; width: 100%; min-height: 52px; font-family: var(--font-display);
+  font-weight: 800; font-stretch: 75%; font-size: 1.75rem; color: var(--label); text-decoration: none;
+  border-bottom: 1px solid var(--separator);
+}
+.menu > :last-child { margin-top: var(--space-4); }
+@media (max-width: 860px) {
+  .links, .cta { display: none; }
+  .toggle { display: grid; }
+}

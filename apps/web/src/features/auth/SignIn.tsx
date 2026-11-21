@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { demoSignIn, demoWalletEnabled } from "../../lib/demoWallet";
 import { Button, ButtonLink } from "../../ui/Button";
-import { Gauge } from "../../ui/Gauge";
 import { AgeScreen } from "./AgeScreen";
 import { readAge, type AgeResult } from "./age";
 import s from "./Auth.module.css";
@@ -28,9 +27,6 @@ export function SignIn() {
 
   return (
     <main className={s.page}>
-      <div className={s.side} aria-hidden="true">
-        <Gauge ratio={165} />
-      </div>
       {age === null && <AgeScreen onResult={setAge} />}
       {age === "under" && (
         <section className={s.panel}>
@@ -52,7 +48,7 @@ export function SignIn() {
             <span className="mono">Wallet code</span>
           </div>
           {demoWalletEnabled && (
-            <Button onClick={demo} disabled={busy}>{busy ? "Signing in" : "Use demo wallet (mock server)"}</Button>
+            <Button onClick={demo} disabled={busy} state={busy ? "working" : "idle"}>{busy ? "Signing in" : "Use demo wallet (mock server)"}</Button>
           )}
           {err && <p className={s.err} role="alert">Sign-in failed: {err}</p>}
         </section>

@@ -8,8 +8,11 @@ import { Alerts } from "../features/account/Alerts";
 import { ProPass } from "../features/account/ProPass";
 import { LegalPage } from "../features/legal/LegalPage";
 import { NotFound } from "./NotFound";
+import { RibbonLab } from "../features/lab/RibbonLab";
+import { RibbonStill } from "../features/lab/RibbonStill";
 
 export const router = createBrowserRouter([
+  ...(import.meta.env.DEV ? [{ path: "/lab/ribbon-still", element: <RibbonStill /> }] : []),
   {
     element: <Shell />,
     children: [
@@ -22,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "alerts", element: <Alerts /> },
       { path: "pro", element: <ProPass /> },
       { path: "legal/:doc", element: <LegalPage /> },
+      ...(import.meta.env.DEV ? [{ path: "lab/ribbon", element: <RibbonLab /> }] : []),
       { path: "*", element: <NotFound /> },
     ],
   },
