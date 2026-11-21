@@ -36,6 +36,8 @@ describe("buildSnapshot", () => {
     expect(snap.blockHeight).toBe(948500);
     expect(snap.skipped).toBe(0);
     expect(snap.loans[0]!.id).toBe(SIDE);
+    expect(snap.loans[0]!.rateRaw).toBe(1959);
+    expect(snap.loans[0]!.nextRateRaw).toBe(0);
     const [v] = computeLoanViews(snap.loans, snap.priceUsd);
     expect(v!.debtPusd).toBe(3150);
     expect(v!.collateralBch).toBeCloseTo(18.98581599, 8);

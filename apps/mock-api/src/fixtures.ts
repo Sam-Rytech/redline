@@ -19,6 +19,9 @@ function hexId(rand: () => number): string {
   return s;
 }
 
+/** On-chain rate (per 10,000,000 per day) for an annual percentage. */
+const rawRate = (annualPct: number) => Math.round((annualPct * 100_000) / 365);
+
 /** Build a loan whose CR is exactly `crPct` at MOCK_PRICE_USD. */
 function loanAtCr(rand: () => number, crPct: number, debtPusd: number, ratePct: number): RawLoan {
   const collateralBch = (debtPusd * crPct) / 100 / MOCK_PRICE_USD;
@@ -27,8 +30,8 @@ function loanAtCr(rand: () => number, crPct: number, debtPusd: number, ratePct: 
     status: "mature",
     debtPusd,
     collateralSats: Math.round(collateralBch * 1e8),
-    interestRatePct: ratePct,
-    nextInterestRatePct: ratePct,
+    rateRaw: rawRate(ratePct),
+    nextRateRaw: rawRate(ratePct),
     amountBeingRedeemedPusd: 0,
   };
 }
@@ -45,7 +48,7 @@ export function makeRawLoans(seed = 42): RawLoan[] {
     { ...loanAtCr(rand, 200, 1, 2.0), debtPusd: 0, collateralSats: 3_120_000 },
     loanAtCr(rand, 126, 5_200, 0.25), // danger
     { ...loanAtCr(rand, 150, 1_300, 0.75), amountBeingRedeemedPusd: 420 },
-    { ...loanAtCr(rand, 180, 9_000, 1.5), nextInterestRatePct: 2.5, status: "single-period" },
+    { ...loanAtCr(rand, 180, 9_000, 1.5), nextRateRaw: rawRate(2.5), status: "single-period" },
     { ...loanAtCr(rand, 400, 60, 4.0), status: "new" }, // small loan (< 100 PUSD)
   ];
   while (loans.length < 40) {

@@ -7,8 +7,8 @@ const raw = (id: string, debtPusd: number, collateralSats: number): RawLoan => (
   status: "mature",
   debtPusd,
   collateralSats,
-  interestRatePct: 1,
-  nextInterestRatePct: 1,
+  rateRaw: 274,
+  nextRateRaw: 274,
   amountBeingRedeemedPusd: 0,
 });
 // price 200: loan "a" liq = 1000/10*1.1=110 (45% away); "b" liq=1800/10*1.1=198 (1% away)

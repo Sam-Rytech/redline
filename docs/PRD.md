@@ -134,7 +134,9 @@ or SMS alerts, any custody of keys or funds.
 
 1. How many liquidations have happened since 30 Apr 2026?
 2. Are the 53 stranded loans claimable by their owners, and do the owners know?
-3. Does the Paryon app URL in `PARYON_APP_URL` exist as written?
+3. Answered 21 Nov: it did not. `app.paryonusd.com` returns 404; the dApp is
+   `https://paryonusd.com/app` (the "Go to dApp" link on stats.paryonusd.com). It has no
+   per-loan URLs, so links go to the app itself.
 4. Final judging criteria for BCH BLAZE 2026 (only the 2025 edition could be found).
 5. Who is the lawyer for the age, privacy and "not financial advice" pages? Flagged in
    `COMPLIANCE.md`.
