@@ -69,22 +69,25 @@ Repo (pnpm workspaces):
 
 **Protocol (v1)**
 
-1. Client connects via WizardConnect → receives xpubs (`receive`, `change`; `defi` = index 7 if present).
-2. Client derives receive/change addresses (indices 0–19 each), asks the server for UTXOs, picks the **smallest pure-BCH UTXO ≥ 2,000 sats** (no tokens).
-3. `POST /auth/challenge {xpubReceive, outpoint, path:[pathName, index]}` → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, browser_id}`, sets an HttpOnly `rl_ch` cookie holding `browser_id`, and returns the nonce, expiry and domain. `/auth/verify` must carry the same cookie, so a challenge answered from another browser is rejected (relay attack, see `SECURITY.md`).
-4. Client builds the login transaction (CashScript `TransactionBuilder`, placeholder P2PKH unlocker):
+0. The age screen has passed (`POST /api/age-check`, signed `rl_age` cookie); otherwise the challenge is refused with `age_required`.
+1. Client connects via WizardConnect → receives xpubs (`receive`, `change`; `defi` = index 7 if present). Wallets may send `wallet_ready` more than once (Selene's first one carries no paths), so the client reads the paths when it signs in, not at the first event.
+2. Client derives the **receive** addresses (indices 0–19), asks the server for UTXOs, picks the **smallest pure-BCH UTXO ≥ 2,000 sats** (no tokens). Only receive-path coins can sign in (`SECURITY.md` item 6).
+3. `POST /auth/challenge {outpoint, path:["receive", index]}` → server stores `{nonce (16 random bytes), expiry = now+300s, domain, outpoint, path, browser_id = sha256(cookie)}`, sets an HttpOnly `rl_ch` cookie holding the random browser id, and returns the nonce, expiry and domain. `/auth/verify` must carry the same cookie, so a challenge answered from another browser is rejected (relay attack, see `SECURITY.md`).
+4. Client builds the login transaction (libauth, placeholder P2PKH unlocker), version 2, locktime 0, input sequence final:
    - Input 0: the chosen UTXO
    - Output 0: `OP_RETURN` → `"WZL1"` | domain (utf-8) | nonce (16 B) | expiry (uint32 LE)
-   - Output 1: P2PKH back to **the same address**, value = input − fee (fee ≈ 1 sat/byte, ~250–300 sats)
+   - Output 1: P2PKH back to **the same address**, value = input − fee (400 sats; the server accepts 200–2,000)
 5. Client calls `signTransaction({ transaction, sourceOutputs, broadcast: false, userPrompt: "Sign in to Redline — this will NOT be sent" }, inputPaths=[[0, pathName, index]])`.
-6. `POST /auth/verify {signedTxHex}`. Server checks, in order:
-   1. Decodes tx; exactly 1 input = challenge outpoint; outputs match the template above.
-   2. OP_RETURN domain == our domain, nonce == stored nonce, not expired, nonce unused.
-   3. **Fetches the source output itself from Electrum** (never trusts client `sourceOutputs`).
-   4. Address of that output == address derived from `xpubReceive`/`change` at the stated path.
-   5. libauth VM `verify` of the full transaction against the fetched source output passes (proves the signature).
-   6. Outpoint is unspent **or** spent by exactly this txid (covers wallets that broadcast anyway).
-7. Server marks nonce used, sets `accountId = sha256(xpubReceive)`, issues an HttpOnly session cookie (7 days).
+6. `POST /auth/verify {signedTxHex, xpubReceive, xpubChange}`. Server checks, in order:
+   1. Both xpubs are mainnet and differ.
+   2. Decodes tx; exactly 1 input = challenge outpoint; outputs match the template above; no tokens.
+   3. OP_RETURN domain == our domain, nonce == a stored nonce, the `rl_ch` cookie matches (`challenge_mismatch`), not expired (`challenge_expired`), not used (`challenge_used`).
+   4. **Fetches the source output itself from Electrum** (never trusts client `sourceOutputs`); it holds no tokens and at least 2,000 sats.
+   5. Address of that output == address derived from `xpubReceive` at the challenge's receive index; output 1 pays back to it.
+   6. Input 0 is exactly `<SIGHASH_ALL|FORKID signature> <derived public key>`, and the libauth VM `verify` of the full transaction against the fetched source output passes.
+   7. Outpoint is unspent **or** spent by exactly this txid (covers wallets that broadcast anyway).
+   Any failure other than the three challenge codes is 422 `login_invalid`.
+7. Server marks the nonce used, sets `accountId = sha256(xpubReceive)`, stores the xpubs encrypted in a new session row and issues an HttpOnly session cookie (7 days).
 
 **Properties:** no password/email; replay-proof (single-use nonce + expiry); bound to our domain; worst case if broadcast = the user loses ~300 sats of fee, coins return to them.
 
@@ -93,10 +96,10 @@ Repo (pnpm workspaces):
 **Public API (for other BLAZE teams):**
 ```ts
 // client
-const session = await wizardLogin({ manager /* DappConnectionManager */, apiBase, domain });
+const me = await wizardLogin({ manager /* DappConnectionManager */, apiBase });
 // server (framework-agnostic)
-createChallenge(input) -> Challenge
-verifyLogin(signedTxHex, deps: { getSourceOutput, isUnspentOrSpentBy, store }) -> { accountId }
+createChallenge({ outpoint, path }, { domain, now, randomBytes }) -> { challenge, browserId }
+verifyLogin({ signedTxHex, xpubReceive, xpubChange }, deps: { getChallenge, markChallengeUsed, getSourceOutput, isUnspentOrSpentBy, browserId, domain, now }) -> { ok, accountId, xpubReceive, xpubChange } | { ok: false, code, message }
 ```
 
 ### 3.2 `packages/paryon-decoder` — on-chain state → numbers

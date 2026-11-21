@@ -13,6 +13,10 @@ describe("parseConfig", () => {
       electrumHost: undefined,
       databasePath: "./data/redline.db",
       backupDir: undefined,
+      loginDomain: "localhost",
+      publicOrigin: "http://localhost:5173",
+      trustProxyHops: 0,
+      logXff: false,
       production: false,
     });
     expect(c.sessionSecret.length).toBeGreaterThanOrEqual(32);
@@ -38,10 +42,23 @@ describe("parseConfig", () => {
     expect(parseConfig({ REFRESH_MS: "1000" }).refreshMs).toBe(60_000);
     expect(parseConfig({ REFRESH_MS: "5000" }).refreshMs).toBe(5000);
   });
-  it("requires a SESSION_SECRET of at least 32 characters in production", () => {
-    expect(() => parseConfig({ NODE_ENV: "production" })).toThrow(/SESSION_SECRET/);
-    expect(() => parseConfig({ NODE_ENV: "production", SESSION_SECRET: "short" })).toThrow(/32/);
-    expect(parseConfig({ NODE_ENV: "production", SESSION_SECRET: SECRET })).toMatchObject({ production: true, warnings: [] });
+  it("requires a SESSION_SECRET of at least 32 characters and PUBLIC_ORIGIN in production", () => {
+    const prod = { NODE_ENV: "production", PUBLIC_ORIGIN: "https://redline.example" };
+    expect(() => parseConfig({ ...prod })).toThrow(/SESSION_SECRET/);
+    expect(() => parseConfig({ ...prod, SESSION_SECRET: "short" })).toThrow(/32/);
+    expect(() => parseConfig({ NODE_ENV: "production", SESSION_SECRET: SECRET })).toThrow(/PUBLIC_ORIGIN/);
+    expect(parseConfig({ ...prod, SESSION_SECRET: SECRET })).toMatchObject({
+      production: true, publicOrigin: "https://redline.example", warnings: [],
+    });
+  });
+  it("reads the sign-in settings", () => {
+    expect(
+      parseConfig({ LOGIN_DOMAIN: "redline.example", PUBLIC_ORIGIN: "https://redline.example", TRUST_PROXY_HOPS: "2", LOG_XFF: "1" }),
+    ).toMatchObject({ loginDomain: "redline.example", publicOrigin: "https://redline.example", trustProxyHops: 2, logXff: true });
+  });
+  it("rejects a malformed PUBLIC_ORIGIN or TRUST_PROXY_HOPS", () => {
+    expect(() => parseConfig({ PUBLIC_ORIGIN: "https://redline.example/app" })).toThrow(/origin/);
+    for (const v of ["-1", "1.5", "abc"]) expect(() => parseConfig({ TRUST_PROXY_HOPS: v })).toThrow(/TRUST_PROXY_HOPS/);
   });
   it("rejects a short SESSION_SECRET outside production too", () => {
     expect(() => parseConfig({ SESSION_SECRET: "short" })).toThrow(/32/);

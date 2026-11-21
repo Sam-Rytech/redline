@@ -82,15 +82,26 @@ export interface LoansResponse {
 /** GET /api/loans/:id → LoanView (404 ApiError) */
 /** GET /api/me/loans → LoanView[] (401 if not signed in) */
 
+// ---------- age screen ----------
+/**
+ * POST /api/age-check → { ok: true }, or 403 `age_blocked`. Sets the HttpOnly `rl_age` cookie
+ * either way; a blocked result cannot be changed by sending another date. The date is never
+ * stored. `/auth/challenge` answers 403 `age_required` until this has passed.
+ */
+export interface AgeCheckRequest {
+  dateOfBirth: string; // "YYYY-MM-DD"
+}
+
 // ---------- auth ----------
 export type AddressPathName = "receive" | "change";
 
-/** POST /api/auth/challenge */
+/**
+ * POST /api/auth/challenge. Sets the HttpOnly `rl_ch` cookie that binds the challenge to this
+ * browser; `/auth/verify` must come from the same browser. Only receive-path coins can sign in.
+ */
 export interface ChallengeRequest {
-  xpubReceive: string;
-  xpubChange: string;
   outpoint: Outpoint;
-  path: [AddressPathName, number];
+  path: ["receive", number];
 }
 export interface ChallengeResponse {
   nonce: Hex; // 16 bytes
@@ -98,12 +109,22 @@ export interface ChallengeResponse {
   domain: string;
 }
 
-/** POST /api/auth/verify → MeResponse (sets HttpOnly cookie) */
+/**
+ * POST /api/auth/verify → MeResponse, sets the `rl_session` cookie. The xpubs are kept only in
+ * the encrypted session (docs/SECURITY.md). Errors: 403 `challenge_mismatch`, 410
+ * `challenge_expired` / `challenge_used`, 422 `login_invalid` (the message says why).
+ */
 export interface VerifyRequest {
   signedTxHex: Hex;
+  xpubReceive: string;
+  xpubChange: string;
 }
 
-/** GET /api/me (401 if not signed in). POST /api/auth/logout → { ok: true } */
+/**
+ * GET /api/me (401 if not signed in). POST /api/auth/logout → { ok: true }.
+ * DELETE /api/me → { ok: true }: removes the account, its sessions, watches, alert history,
+ * invoices and Telegram link.
+ */
 export interface MeResponse {
   accountId: Hex;
   pro: boolean;

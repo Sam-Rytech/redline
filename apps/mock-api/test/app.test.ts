@@ -2,14 +2,26 @@ import { describe, expect, it } from "vitest";
 import type { Invoice, InvoiceQuote, LoansResponse, LoanView, MeResponse, Watch } from "@redline/api-types";
 import { createApp } from "../src/app.js";
 
+const JSON_HEADERS = { "content-type": "application/json" };
+const cookieOf = (res: Response, name: string) => res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`))!.split(";")[0]!;
+
+/** age check → challenge → verify, the same order as the real server */
 async function signIn(app: ReturnType<typeof createApp>) {
+  const age = await app.request("/api/age-check", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ dateOfBirth: "1990-05-04" }) });
+  expect(age.status).toBe(200);
+  const ch = await app.request("/api/auth/challenge", {
+    method: "POST",
+    headers: { ...JSON_HEADERS, cookie: cookieOf(age, "rl_age") },
+    body: JSON.stringify({ outpoint: { txid: "11".repeat(32), vout: 0 }, path: ["receive", 0] }),
+  });
+  expect(ch.status).toBe(200);
   const res = await app.request("/api/auth/verify", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ signedTxHex: "00" }),
+    headers: { ...JSON_HEADERS, cookie: cookieOf(ch, "rl_ch") },
+    body: JSON.stringify({ signedTxHex: "00", xpubReceive: "xpub-mock", xpubChange: "xpub-mock-change" }),
   });
   expect(res.status).toBe(200);
-  const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
+  const cookie = cookieOf(res, "rl_session");
   return (path: string, init: RequestInit = {}) =>
     app.request(path, {
       ...init,
@@ -146,9 +158,39 @@ describe("mock api", () => {
     expect(((await dup.json()) as { error: { code: string } }).error.code).toBe("watch_exists");
   });
 
+  it("matches the real server's request rules: JSON only, 16 KB, age before challenge, challenge before verify", async () => {
+    const app = createApp();
+    const codeOf = async (r: Response) => ((await r.json()) as { error: { code: string } }).error.code;
+    const plain = await app.request("/api/age-check", { method: "POST", body: "dateOfBirth=1990-01-01", headers: { "content-type": "text/plain" } });
+    expect(plain.status).toBe(403);
+    expect(await codeOf(plain)).toBe("forbidden_origin");
+    const big = await app.request("/api/age-check", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ pad: "x".repeat(17 * 1024) }) });
+    expect(big.status).toBe(413);
+    const noAge = await app.request("/api/auth/challenge", { method: "POST", headers: JSON_HEADERS, body: "{}" });
+    expect(await codeOf(noAge)).toBe("age_required");
+    const young = await app.request("/api/age-check", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ dateOfBirth: "2020-01-01" }) });
+    expect(young.status).toBe(403);
+    expect(await codeOf(young)).toBe("age_blocked");
+    const again = await app.request("/api/age-check", {
+      method: "POST", headers: { ...JSON_HEADERS, cookie: cookieOf(young, "rl_age") }, body: JSON.stringify({ dateOfBirth: "1990-01-01" }),
+    });
+    expect(await codeOf(again)).toBe("age_blocked");
+    const unbound = await app.request("/api/auth/verify", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ signedTxHex: "00" }) });
+    expect(unbound.status).toBe(403);
+    expect(await codeOf(unbound)).toBe("challenge_mismatch");
+  });
+
+  it("DELETE /api/me signs out and resets the account", async () => {
+    const app = createApp();
+    const call = await signIn(app);
+    const del = await call("/api/me", { method: "DELETE" });
+    expect(del.status).toBe(200);
+    expect((await call("/api/me")).status).toBe(401);
+  });
+
   it("maps malformed JSON to 400 and unknown paths to 404", async () => {
     const app = createApp();
-    const res = await app.request("/api/auth/verify", { method: "POST", body: "not json" });
+    const res = await app.request("/api/age-check", { method: "POST", headers: JSON_HEADERS, body: "not json" });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("bad_request");
     const nope = await app.request("/api/nope");

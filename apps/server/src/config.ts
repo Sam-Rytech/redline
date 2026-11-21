@@ -11,6 +11,14 @@ export interface ServerConfig {
   sessionSecret: string;
   /** Where nightly backups go; backups are off when unset. */
   backupDir: string | undefined;
+  /** domain the login transaction's OP_RETURN must carry (the web app's host) */
+  loginDomain: string;
+  /** the only Origin allowed on state-changing requests (docs/SECURITY.md CSRF rule) */
+  publicOrigin: string;
+  /** how many proxies append to x-forwarded-for in front of us; 0 = use the TCP peer */
+  trustProxyHops: number;
+  /** log the raw x-forwarded-for of the first 5 /api/auth requests, to set trustProxyHops */
+  logXff: boolean;
   production: boolean;
   /** Non-fatal problems to log at start-up. */
   warnings: string[];
@@ -37,6 +45,15 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     throw new Error(`SESSION_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
   }
 
+  const publicOrigin = env.PUBLIC_ORIGIN ?? "";
+  if (publicOrigin === "" && production) throw new Error("PUBLIC_ORIGIN is required in production");
+  if (publicOrigin !== "" && !/^https?:\/\/[^/\s]+$/.test(publicOrigin)) {
+    throw new Error("PUBLIC_ORIGIN must be an origin like https://redline.example (no path)");
+  }
+
+  const hops = env.TRUST_PROXY_HOPS ?? "";
+  if (hops !== "" && !/^\d+$/.test(hops)) throw new Error("TRUST_PROXY_HOPS must be a whole number (0 or more)");
+
   return {
     port: positive(env.PORT, 8787),
     refreshMs: positive(env.REFRESH_MS, 60_000, 5000),
@@ -45,6 +62,10 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     databasePath: env.DATABASE_PATH || "./data/redline.db",
     sessionSecret,
     backupDir: env.BACKUP_DIR || undefined,
+    loginDomain: env.LOGIN_DOMAIN || "localhost",
+    publicOrigin: publicOrigin || "http://localhost:5173",
+    trustProxyHops: hops === "" ? 0 : Number(hops),
+    logXff: env.LOG_XFF === "1",
     production,
     warnings,
   };

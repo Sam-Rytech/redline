@@ -24,9 +24,10 @@ section 3.1. Threats and decisions:
 1. **Relay attack (decision: bind the challenge to the browser).** An attacker's page can ask
    our server for a challenge and show it to a victim's wallet. If the session went to
    whoever submitted the signed result, the attacker would be signed in as the victim. Fix:
-   `POST /auth/challenge` sets an HttpOnly cookie `rl_ch` holding a random id stored with the
-   challenge. `POST /auth/verify` must carry the same cookie, or it is rejected with
-   `challenge_mismatch`. The wallet prompt also names our domain, and the OP_RETURN carries it.
+   `POST /auth/challenge` sets an HttpOnly cookie `rl_ch` (path `/api/auth`, 5 minutes)
+   holding a random 32-byte id; the challenge row stores its sha256. `POST /auth/verify` must
+   carry the same cookie, or it is rejected with `challenge_mismatch`, and every verify attempt
+   clears it. The wallet prompt also names our domain, and the OP_RETURN carries it.
 2. **Replay.** Nonce is 16 random bytes, single use, 5 minute expiry, bound to `LOGIN_DOMAIN`.
 3. **The signed transaction is broadcastable.** Harmless by design: it pays the user's own
    address back to itself minus about 300 satoshis. The server never logs or stores the signed
@@ -36,6 +37,18 @@ section 3.1. Threats and decisions:
    or spent by this exact transaction.
 5. **Wallets that broadcast anyway.** Verification accepts it; the interface says "this wallet
    sends a tiny self-payment to sign in".
+6. **Signing in as someone else's account (found in review, 20 Nov).** The account id is
+   `sha256(xpubReceive)`, so the login must prove that exact key: only a receive-path coin can
+   sign in (`bad_path` otherwise), and the server derives the address from the receive xpub the
+   browser sends at verify. An attacker who knows a victim's xpub cannot sign for the victim's
+   address. The change xpub is not proven; it is only used to look for loan keys.
+7. **Signatures that do not cover the whole transaction (found in review).** The input must be
+   exactly `<signature> <public key>`, the signature type must be SIGHASH_ALL|FORKID (0x41), and
+   the public key must be the derived one. A SIGHASH_NONE or ANYONECANPAY signature, which would
+   not commit to the nonce, is rejected.
+8. **Token coins.** A coin carrying CashTokens (possibly a loan key) is refused as the sign-in
+   coin, because a broadcast login transaction would burn the token. The coin must hold at
+   least 2,000 satoshis.
 
 ## Data minimisation (decision)
 
@@ -43,14 +56,21 @@ The wallet's xpubs are needed once, at sign-in, and to find which loan keys are 
 They are not needed for alerts.
 
 - The `accounts` table stores only `id = sha256(xpubReceive)`, plus plan and age fields. No xpub.
-- The xpubs live only inside the session row, encrypted with a key derived from
-  `SESSION_SECRET`, and are deleted when the session ends or expires.
+- The xpubs live only inside the session row, encrypted with AES-256-GCM under a key derived
+  from `SESSION_SECRET` (HKDF), bound to that session's id so a row cannot be moved to another
+  session, and are deleted when the session ends or expires. The browser sends them with
+  `/auth/verify`; the challenge row never holds them.
 - Logs never contain xpubs, signed transaction hex, session ids, cookies or Telegram tokens.
 - Signing in reveals one UTXO and the xpubs to our server. The privacy page says so.
 
 ## Sessions and cookies
 
-- Cookie `rl_session`: HttpOnly, Secure, SameSite=Lax, path `/`, 7 days, rotated on sign-in.
+- Cookie `rl_session`: HttpOnly, Secure, SameSite=Lax, path `/`, 7 days, a fresh random
+  32-byte value on every sign-in. The `sessions` row is keyed by its sha256, so a database
+  leak cannot be replayed as a cookie.
+- Cookie `rl_age`: HttpOnly, Secure, SameSite=Lax, path `/`, holds the age result signed with
+  an HMAC key derived from `SESSION_SECRET`, so the browser cannot forge "ok". A blocked
+  result lasts a year; an ok result a day.
 - Web and API share one origin: Vercel rewrites `/api/*` to the server, so the cookie is
   first-party and no CORS is needed. The server therefore sends no CORS headers. If a
   different origin is ever needed, it is added explicitly with credentials and a fixed
@@ -91,9 +111,12 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
 
 ## Abuse and availability
 
-- Rate limits: `/api/auth/*` 10 per minute per IP; `/api/utxos` 30 per minute per IP and a
+- Rate limits: `/api/auth/*` and `/api/age-check` 10 per minute per IP; `/api/utxos` 30 per minute per IP and a
   maximum of 40 addresses per call; invoices 5 per minute per account.
 - Request bodies capped at 16 KB. All inputs validated against the types in `api-types`.
+- The client IP for rate limits is the TCP peer, or, behind proxies, the entry
+  `TRUST_PROXY_HOPS` positions from the right of `x-forwarded-for` (entries further left are
+  written by the client and ignored). Check the real chain once on staging with `LOG_XFF=1`.
 - Errors never include stack traces or internals. The envelope is `{ error: { code, message } }`.
 - The server runs on an always-on host with a persistent volume. A sleeping host stops alerts.
 
@@ -104,10 +127,10 @@ A smoke alarm that cries wolf is ignored. Requirements, also in the PRD:
 - Secrets only in host environment variables. `.env` files are git-ignored; `.env.example`
   lists every variable the code reads and nothing else.
 - Variables: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGIN`,
-  `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`, `BACKUP_DIR`. Read today:
-  `ELECTRUM_HOST`, `SESSION_SECRET` (at least 32 characters, required in production),
-  `DATABASE_PATH`, `BACKUP_DIR` and the refresh settings; the others arrive with the code that
-  reads them. `apps/server/.env.example` lists exactly the ones read.
+  `LOGIN_DOMAIN`, `MERCHANT_ADDRESS`, `DATABASE_PATH`, `BACKUP_DIR`, `TRUST_PROXY_HOPS`,
+  `LOG_XFF`. Read today: all except `TELEGRAM_BOT_TOKEN` and `MERCHANT_ADDRESS`, which arrive
+  with the code that reads them. `SESSION_SECRET` (at least 32 characters) and `PUBLIC_ORIGIN`
+  are required in production. `apps/server/.env.example` lists exactly the ones read.
 
 ## Privacy and deletion
 

@@ -1,0 +1,21 @@
+{
+  "name": "@redline/login-demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p .",
+    "test": "echo no tests"
+  },
+  "dependencies": {
+    "@redline/api-types": "workspace:*",
+    "@redline/wizard-login": "workspace:*",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "1.5.6",
+    "vite": "8.3.8"
+  }
+}
