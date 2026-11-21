@@ -93,7 +93,7 @@ CREATE TABLE alerts_sent (
   watch_id    TEXT NOT NULL REFERENCES watches(id) ON DELETE CASCADE,
   rule        TEXT NOT NULL,
   band        TEXT NOT NULL,
-  arming      INTEGER NOT NULL,          -- increments each time the rule re-arms
+  arming      INTEGER NOT NULL,          -- 1 for the first time this watch entered this band, 2 after it re-armed and entered again, ...
   value       REAL,
   sent_at     INTEGER NOT NULL,
   UNIQUE (watch_id, rule, band, arming)

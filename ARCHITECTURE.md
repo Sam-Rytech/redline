@@ -156,16 +156,18 @@ Verified (gate G2; totals and individual loans match stats.paryonusd.com on 20 a
 
 | Rule | Default trigger |
 |---|---|
-| Liquidation distance | crosses 25% → 15% → 8% bands (alert once per band, re-arm when it recovers +3%) |
-| Redemption queue | debtAhead < user threshold (default 20,000 PUSD) |
-| Redemption started | `amountBeingRedeemed` goes from 0 to >0 |
-| Rate change pending | `nextInterestRate` changed |
-| Stranded collateral | debt reaches 0 with leftover BCH |
-| Loan gone | UTXO disappears with no successor (liquidated/closed) |
+| Liquidation distance (built) | crosses 25% → 15% → 8% bands (alert once per band, re-arm when it recovers +3%). On a watch's first look, only danger or critical alerts at once |
+| Loan gone (built) | loan absent from 3 consecutive successful reads (liquidated, repaid or closed) |
+| Redemption queue (stretch) | debtAhead < user threshold (default 20,000 PUSD) |
+| Redemption started (stretch) | `amountBeingRedeemed` goes from 0 to >0 |
+| Rate change pending (stretch) | `nextInterestRate` changed |
+| Stranded appears (stretch) | debt reaches 0 with leftover BCH |
+
+Integrity rules for the engine are in `docs/SECURITY.md` ("Data integrity of the alarm").
 
 Each alert deep-links to the official Paryon dApp to act. No in-app loan actions in v1.
 
-**Telegram bot (grammY, long polling)** — linking: web shows "Connect Telegram" → `t.me/<bot>?start=<one-time token>` → bot stores `chat_id` against the account. Commands: `/status`, `/mute`, `/help`.
+**Telegram bot (grammY, long polling)** — linking: web shows "Connect Telegram" → `t.me/<bot>?start=<one-time token>` → bot stores `chat_id` against the account. Commands: `/status`, `/mute` and `/unmute` (per account, on or off), `/help`. Replies and alerts follow `docs/BRAND.md`: plain, numbers first, no emojis. One chat per account; a link token is single use, 10 minutes, stored hashed.
 
 **API**
 ```

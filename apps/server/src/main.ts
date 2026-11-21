@@ -7,7 +7,9 @@ import { startBackups } from "./db/backup.js";
 import { openDatabase } from "./db/open.js";
 import { startRetention } from "./db/retention.js";
 import { recordSnapshot } from "./db/snapshots.js";
+import { createAlertRunner } from "./alerts.js";
 import { createElectrumChain } from "./electrum.js";
+import { startTelegramBot } from "./telegram/bot.js";
 import { createChainReader } from "./reader.js";
 
 const config = parseConfig(process.env);
@@ -26,6 +28,20 @@ const reader = createChainReader({
 reader.onUpdate((_prev, next) => {
   recordSnapshot(db, { blockHeight: next.blockHeight, loans: next.raw });
 });
+
+// Telegram alerts and linking run only with a bot token. One running server per token.
+const telegram = config.telegramBotToken
+  ? startTelegramBot({
+      token: config.telegramBotToken,
+      deps: { db, reader, now: () => Math.floor(Date.now() / 1000), publicOrigin: config.publicOrigin },
+    })
+  : null;
+if (telegram) {
+  const alerts = createAlertRunner({ db, sendMessage: telegram.sendMessage });
+  reader.onUpdate((prev, next) => alerts.onUpdate(prev, next));
+} else {
+  console.warn("warning: TELEGRAM_BOT_TOKEN is not set; Telegram linking and alerts are off");
+}
 reader.start();
 
 const app = createApp({
@@ -34,19 +50,25 @@ const app = createApp({
   chain: createElectrumChain({ hostnames }),
   secrets: createSecrets(config.sessionSecret),
   config,
+  botUsername: () => telegram?.username(),
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, () => {
   console.log(`Redline API on http://localhost:${config.port}/api (login domain ${config.loginDomain})`);
 });
 
-const shutdown = () => {
+let stopping = false;
+const shutdown = async () => {
+  if (stopping) return;
+  stopping = true;
   reader.stop();
   stopRetention();
   stopBackups();
+  // let the bot finish its poll so updates are not delivered twice, but never wait more than 3 s
+  if (telegram) await Promise.race([telegram.stop().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
   server.close();
   db.close();
   process.exit(0);
 };
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

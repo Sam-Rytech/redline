@@ -19,6 +19,8 @@ export interface ServerConfig {
   trustProxyHops: number;
   /** log the raw x-forwarded-for of the first 5 /api/auth requests, to set trustProxyHops */
   logXff: boolean;
+  /** Telegram bot token from @BotFather; alerts and linking are off when unset. Never logged. */
+  telegramBotToken: string | undefined;
   production: boolean;
   /** Non-fatal problems to log at start-up. */
   warnings: string[];
@@ -66,6 +68,7 @@ export function parseConfig(env: Record<string, string | undefined>): ServerConf
     publicOrigin: publicOrigin || "http://localhost:5173",
     trustProxyHops: hops === "" ? 0 : Number(hops),
     logXff: env.LOG_XFF === "1",
+    telegramBotToken: env.TELEGRAM_BOT_TOKEN || undefined,
     production,
     warnings,
   };

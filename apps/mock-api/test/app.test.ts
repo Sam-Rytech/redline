@@ -180,6 +180,16 @@ describe("mock api", () => {
     expect(await codeOf(unbound)).toBe("challenge_mismatch");
   });
 
+  it("Telegram link and unlink flip telegramLinked", async () => {
+    const app = createApp();
+    const call = await signIn(app);
+    expect((await call("/api/telegram/link-token", { method: "POST", body: "{}" })).status).toBe(200);
+    await call("/api/mock/telegram-linked");
+    expect(((await (await call("/api/me")).json()) as MeResponse).telegramLinked).toBe(true);
+    expect((await call("/api/telegram/unlink", { method: "POST", body: "{}" })).status).toBe(200);
+    expect(((await (await call("/api/me")).json()) as MeResponse).telegramLinked).toBe(false);
+  });
+
   it("DELETE /api/me signs out and resets the account", async () => {
     const app = createApp();
     const call = await signIn(app);

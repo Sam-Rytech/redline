@@ -90,6 +90,8 @@ export function createApp() {
       blockHeight: MOCK_BLOCK_HEIGHT,
       priceUsd: MOCK_PRICE_USD,
       updatedAt: new Date().toISOString(),
+      stale: false,
+      dataAgeSeconds: 0,
       summary: summarize(loans),
       loans,
     };
@@ -205,6 +207,10 @@ export function createApp() {
       expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     };
     return c.json(body);
+  });
+  app.post("/telegram/unlink", (c) => {
+    state.telegramLinked = false;
+    return c.json({ ok: true });
   });
   app.get("/mock/telegram-linked", (c) => {
     state.telegramLinked = true;

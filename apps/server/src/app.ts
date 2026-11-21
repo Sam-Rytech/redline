@@ -13,7 +13,9 @@ import {
   type LoanView,
   type MeResponse,
   type OkResponse,
+  type TelegramLinkResponse,
   type VerifyRequest,
+  type WatchRules,
 } from "@redline/api-types";
 import { summarize } from "@redline/paryon-decoder";
 import {
@@ -40,6 +42,17 @@ import {
   type AccountRow,
 } from "./db/auth.js";
 import type { Db } from "./db/open.js";
+import { insertLinkToken, unlinkAccount } from "./db/telegram.js";
+import {
+  DEFAULT_RULES,
+  countWatches,
+  deleteWatch,
+  getWatch,
+  insertWatch,
+  listWatches,
+  toWatch,
+  updateWatchRules,
+} from "./db/watches.js";
 import { addressFor, type Chain } from "./electrum.js";
 import type { ChainReader } from "./reader.js";
 
@@ -65,8 +78,26 @@ export const LIMITS = { auth: 10, utxos: 30 } as const;
 export const MAX_UTXO_ADDRESSES = 40;
 const WALLET_ADDRESS_COUNT = 20;
 const WALLET_CACHE_MS = 60_000;
+/** Telegram link tokens: single use, 10 minutes, 128 bits (docs/SECURITY.md) */
+export const LINK_TOKEN_SECONDS = 10 * 60;
 
 const isToken = (t: string | undefined): t is string => typeof t === "string" && /^[0-9a-f]{64}$/.test(t);
+const MAX_LOAN_ID_LENGTH = 128;
+const RULE_KEYS = ["liquidation", "loanGone"] as const;
+
+/** undefined → {}; an object of optional booleans → those; anything else → null */
+function parseRules(v: unknown): Partial<WatchRules> | null {
+  if (v === undefined) return {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Partial<WatchRules> = {};
+  for (const k of RULE_KEYS) {
+    const x = (v as Record<string, unknown>)[k];
+    if (x === undefined) continue;
+    if (typeof x !== "boolean") return null;
+    out[k] = x;
+  }
+  return out;
+}
 
 export interface AppDeps {
   reader: ChainReader;
@@ -75,6 +106,8 @@ export interface AppDeps {
   secrets: Secrets;
   config: Pick<ServerConfig, "loginDomain" | "publicOrigin" | "trustProxyHops"> & Partial<Pick<ServerConfig, "logXff">>;
   now?: () => Date;
+  /** the Telegram bot's username (no @); undefined while unknown or when no bot is configured */
+  botUsername?: () => string | undefined;
 }
 
 export function createApp(deps: AppDeps) {
@@ -223,16 +256,26 @@ export function createApp(deps: AppDeps) {
   app.get("/health", (c) => {
     const s = reader.current();
     const stale = !s || now().getTime() - new Date(s.updatedAt).getTime() > STALE_MS;
-    return c.json({ ok: true, blockHeight: s?.blockHeight ?? null, updatedAt: s?.updatedAt ?? null, stale, lastError: reader.lastError() });
+    return c.json({
+      ok: true,
+      blockHeight: s?.blockHeight ?? null,
+      updatedAt: s?.updatedAt ?? null,
+      stale,
+      lastError: reader.lastError(),
+      missingSidecars: s?.missingSidecars ?? null,
+    });
   });
 
   app.get("/loans", (c) => {
     const s = reader.current();
     if (!s) return notReady(c);
+    const ageMs = now().getTime() - new Date(s.updatedAt).getTime();
     const body: LoansResponse = {
       blockHeight: s.blockHeight,
       priceUsd: s.priceUsd,
       updatedAt: s.updatedAt,
+      stale: ageMs > STALE_MS,
+      dataAgeSeconds: Math.max(0, Math.floor(ageMs / 1000)),
       summary: summarize(s.loans),
       loans: s.loans,
     };
@@ -386,6 +429,87 @@ export function createApp(deps: AppDeps) {
     }
     const mine: LoanView[] = state.loans.filter((l) => cached!.categories.has(l.id));
     return c.json(mine);
+  });
+
+  // ---------- watches ----------
+  const isPro = (a: AccountRow) => a.proUntil !== null && a.proUntil > nowSec();
+
+  app.get("/watches", (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    return c.json(listWatches(db, s.account.id).map(toWatch));
+  });
+
+  app.post("/watches", async (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    const body = await readJson<{ loanId?: unknown; rules?: unknown }>(c);
+    if (!body) return badRequest(c, "JSON object body required");
+    const { loanId } = body;
+    if (typeof loanId !== "string" || loanId.length === 0 || loanId.length > MAX_LOAN_ID_LENGTH) {
+      return badRequest(c, "loanId must be a loan id string");
+    }
+    const rules = parseRules(body.rules);
+    if (!rules) return badRequest(c, "rules must be an object of booleans: liquidation, loanGone");
+    const state = reader.current();
+    if (!state) return notReady(c);
+    if (!state.byId.has(loanId)) return c.json(err("not_found", "No such loan"), 404);
+    if (listWatches(db, s.account.id).some((w) => w.loanId === loanId)) {
+      return c.json(err("watch_exists", "You already watch this loan"), 409);
+    }
+    if (!isPro(s.account) && countWatches(db, s.account.id) >= FREE_WATCH_LIMIT) {
+      return c.json(err("watch_limit", `The free plan watches ${FREE_WATCH_LIMIT} loan. The 30-day Pro pass watches any number.`), 403);
+    }
+    const id = randomHex(16);
+    if (!insertWatch(db, { id, accountId: s.account.id, loanId, rules: { ...DEFAULT_RULES, ...rules }, createdAt: nowSec() })) {
+      return c.json(err("watch_exists", "You already watch this loan"), 409);
+    }
+    return c.json(toWatch(getWatch(db, s.account.id, id)!), 201);
+  });
+
+  app.patch("/watches/:id", async (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    const w = getWatch(db, s.account.id, c.req.param("id"));
+    if (!w) return c.json(err("not_found", "No such watch"), 404);
+    const body = await readJson<{ rules?: unknown }>(c);
+    if (!body) return badRequest(c, "JSON object body required");
+    const rules = parseRules(body.rules);
+    if (!rules) return badRequest(c, "rules must be an object of booleans: liquidation, loanGone");
+    updateWatchRules(db, s.account.id, w.id, { ...w.rules, ...rules });
+    return c.json(toWatch(getWatch(db, s.account.id, w.id)!));
+  });
+
+  app.delete("/watches/:id", (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    if (!deleteWatch(db, s.account.id, c.req.param("id"))) return c.json(err("not_found", "No such watch"), 404);
+    return c.json({ ok: true } satisfies OkResponse);
+  });
+
+  // ---------- Telegram linking ----------
+  app.post("/telegram/link-token", (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    const username = deps.botUsername?.();
+    if (!username) return c.json(err("telegram_unavailable", "Telegram alerts are not available right now"), 503);
+    // 16 random bytes as base64url: within Telegram's start-payload alphabet [A-Za-z0-9_-]
+    const token = randomBytes(16).toString("base64url");
+    const expiresAt = nowSec() + LINK_TOKEN_SECONDS;
+    insertLinkToken(db, sha256Hex(token), s.account.id, expiresAt);
+    const body: TelegramLinkResponse = {
+      token,
+      url: `https://t.me/${username}?start=${token}`,
+      expiresAt: new Date(expiresAt * 1000).toISOString(),
+    };
+    return c.json(body);
+  });
+
+  app.post("/telegram/unlink", (c) => {
+    const s = signedIn(c);
+    if (!s) return unauthorized(c);
+    unlinkAccount(db, s.account.id);
+    return c.json({ ok: true } satisfies OkResponse);
   });
 
   // ---------- wallet coins (for picking the sign-in coin) ----------

@@ -32,6 +32,7 @@ export function testApp(
     secrets,
     config: { loginDomain: TEST_DOMAIN, publicOrigin: TEST_ORIGIN, trustProxyHops: 0, ...o.config },
     ...(o.now && { now: o.now }),
+    ...(o.botUsername && { botUsername: o.botUsername }),
   });
   return { app, db, secrets };
 }

@@ -22,13 +22,14 @@ Production: Vercel rewrites `/api/:path*` to the Railway server, so cookies stay
 ```bash
 pnpm dev:server        # http://localhost:8787/api  (stop the mock first: same port)
 ```
-Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s, plus the age screen, wallet sign-in, `/api/me`, `/api/me/loans`, `DELETE /api/me` and `/api/utxos`. Watches, Telegram and invoices are not built on the real server yet (404 `not_found`); use the mock for those screens.
+Serves live ParyonUSD loans from BCH mainnet, refreshed every 60 s, plus the age screen, wallet sign-in, `/api/me`, `/api/me/loans`, `DELETE /api/me`, `/api/utxos`, watches and Telegram linking. Invoices (the Pro pass) are not on the real server yet (404 `not_found`); use the mock for that screen. Telegram linking answers 503 `telegram_unavailable` while the server has no `TELEGRAM_BOT_TOKEN`.
 
 Every POST, PATCH and DELETE must send `Origin` equal to the server's `PUBLIC_ORIGIN` (a browser does this itself) and, except DELETE, `Content-Type: application/json` (also for logout: send `{}`). Locally `PUBLIC_ORIGIN` defaults to `http://localhost:5173`.
 
 - For the first few seconds after start, `/api/loans` and `/api/loans/:id` return 503 `{ "error": { "code": "not_ready", ... } }`. Show a loading state and retry.
 - Loans come sorted riskiest first (stranded loans last).
-- `GET /api/health` always returns 200: `{ ok, blockHeight, updatedAt, stale, lastError }`. `stale` is true when there is no data yet or it is older than 5 minutes; `lastError` is the last failed refresh (the previous good data keeps being served).
+- `GET /api/health` always returns 200: `{ ok, blockHeight, updatedAt, stale, lastError, missingSidecars }`. `stale` is true when there is no data yet or it is older than 5 minutes; `lastError` is the last failed refresh (the previous good data keeps being served); `missingSidecars` counts loan outputs read without their sidecar.
+- `GET /api/loans` carries `stale` and `dataAgeSeconds`. Show the age when it is stale (PRD R3). A read missing more than 20% of the loans, or from a server behind the last block, is discarded and the previous data stays.
 
 ## Endpoints
 
@@ -52,7 +53,8 @@ Note: `LoansResponse.summary.strandedCount` / `strandedBch` count loans with deb
 | GET | /api/me/loans | ✓ | `LoanView[]` |
 | GET/POST | /api/watches | ✓ | `Watch[]` / `Watch` (201) — 403 `watch_limit` on free plan, 409 `watch_exists` if already watched |
 | PATCH/DELETE | /api/watches/:id | ✓ | `Watch` / `{ ok: true }` |
-| POST | /api/telegram/link-token | ✓ | `TelegramLinkResponse` |
+| POST | /api/telegram/link-token | ✓ | `TelegramLinkResponse`: open `url` to link the chat; the token is single use and lasts 10 minutes |
+| POST | /api/telegram/unlink | ✓ | `{ ok: true }` |
 | GET | /api/invoices/quote | ✓ | `InvoiceQuote` |
 | POST | /api/invoices | ✓ | `Invoice` (201) |
 | GET | /api/invoices/:id | ✓ | `Invoice` |
@@ -83,8 +85,7 @@ Store the invoice id in localStorage so a reload can `GET /api/invoices/:id` and
 
 ## Error codes
 
-All errors use the envelope above. Every code below is returned by the real server today, except
-`watch_limit` and `watch_exists` (watches are not on the real server yet).
+All errors use the envelope above. Every code below is returned by the real server today.
 
 | Status | Code | When |
 |---|---|---|
@@ -104,6 +105,7 @@ All errors use the envelope above. Every code below is returned by the real serv
 | 429 | `rate_limited` | see `SECURITY.md` for limits |
 | 503 | `not_ready` | chain data not loaded yet |
 | 503 | `chain_unavailable` | the BCH network could not be reached; try again |
+| 503 | `telegram_unavailable` | the server has no Telegram bot configured |
 
 ## Planned contract changes (not yet in `api-types`)
 
@@ -111,7 +113,6 @@ Each becomes a type change, announced in the team chat, when it is built.
 
 | Change | Why |
 |---|---|
-| `LoansResponse.stale: boolean` and `dataAgeSeconds: number` | the data can be old and the screen must say so; alerts are not sent from stale data |
 | `Invoice` response adds `terms: { priceUsd, days: 30, renews: false }` | the pay button shows the terms beside it |
 
 ## Mock-only behaviour

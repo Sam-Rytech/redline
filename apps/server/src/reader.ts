@@ -11,7 +11,12 @@ export interface LoanState {
   byId: Map<string, LoanView>;
   /** the decoded loans as read from chain (raw rates, exact amounts), for loan_snapshots */
   raw: RawLoan[];
+  /** loan outputs with no matching sidecar in this read (reported on /api/health, never dropped silently) */
+  missingSidecars: number;
 }
+
+/** A read that returns fewer than this share of the previous loans is discarded (docs/SECURITY.md). */
+export const MIN_LOAN_RATIO = 0.8;
 
 export interface ChainReader {
   /** last good state, null before the first success */
@@ -20,7 +25,7 @@ export interface ChainReader {
   lastError(): string | null;
   /** one fetch; never throws (records the error instead). Joins an in-flight refresh instead of starting another. */
   refresh(): Promise<void>;
-  /** refresh now, then every intervalMs */
+  /** refresh now, then every intervalMs; after a failed refresh, one quick retry after retryMs */
   start(): void;
   stop(): void;
   onUpdate(fn: (prev: LoanState | null, next: LoanState) => void): void;
@@ -40,11 +45,14 @@ export function createChainReader(opts: {
   intervalMs?: number;
   /** abort a stalled fetch after this long (default 30_000) */
   timeoutMs?: number;
+  /** after a failed refresh (while started), retry once after this long (default 10_000) */
+  retryMs?: number;
   now?: () => Date;
   log?: (msg: string) => void;
 }): ChainReader {
   const intervalMs = opts.intervalMs ?? 60_000;
   const timeoutMs = opts.timeoutMs ?? 30_000;
+  const retryMs = opts.retryMs ?? 10_000;
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? ((m: string) => console.log(m));
 
@@ -52,9 +60,11 @@ export function createChainReader(opts: {
   let error: string | null = null;
   let inflight: Promise<void> | null = null;
   let timer: ReturnType<typeof setInterval> | null = null; // interval handle
+  let retryTimer: ReturnType<typeof setTimeout> | null = null; // at most one pending quick retry
   const listeners: Array<(prev: LoanState | null, next: LoanState) => void> = [];
 
-  async function run(): Promise<void> {
+  /** true when the refresh produced a new state */
+  async function run(): Promise<boolean> {
     try {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const pending = opts.fetch();
@@ -68,8 +78,15 @@ export function createChainReader(opts: {
       } finally {
         clearTimeout(timer);
       }
-      if (snap.loans.length === 0 && state !== null && state.loans.length > 0) {
-        throw new Error(`Refresh returned 0 loans (previous state had ${state.loans.length}); keeping previous state`);
+      // integrity: a partial or lagging read must never replace good data (it would look like loans vanished)
+      if (snap.loans.length === 0) {
+        throw new Error(`Refresh returned 0 loans${state ? ` (previous state had ${state.loans.length})` : ""}; discarded`);
+      }
+      if (state && snap.loans.length < state.loans.length * MIN_LOAN_RATIO) {
+        throw new Error(`Refresh returned ${snap.loans.length} of ${state.loans.length} loans (under ${MIN_LOAN_RATIO * 100}%); discarded`);
+      }
+      if (state && snap.blockHeight < state.blockHeight) {
+        throw new Error(`Refresh is from block ${snap.blockHeight}, behind block ${state.blockHeight}; discarded`);
       }
       const loans = computeLoanViews(snap.loans, snap.priceUsd).sort(byDistance);
       const next: LoanState = {
@@ -79,6 +96,7 @@ export function createChainReader(opts: {
         loans,
         byId: new Map(loans.map((l) => [l.id, l])),
         raw: snap.loans,
+        missingSidecars: snap.skipped,
       };
       const prev = state;
       state = next;
@@ -93,24 +111,39 @@ export function createChainReader(opts: {
           log(`onUpdate listener failed: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+      return true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       log(`chain refresh failed: ${error}`);
+      return false;
     }
   }
 
-  function refresh(): Promise<void> {
+  function refresh(isRetry = false): Promise<void> {
     if (inflight) return inflight;
-    inflight = run().finally(() => {
-      inflight = null;
-    });
+    inflight = run()
+      .then((ok) => {
+        if (ok) {
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = null;
+        } else if (timer && !retryTimer && !isRetry) {
+          // one quick retry per failure; a failed retry waits for the normal interval
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            void refresh(true);
+          }, retryMs);
+        }
+      })
+      .finally(() => {
+        inflight = null;
+      });
     return inflight;
   }
 
   return {
     current: () => state,
     lastError: () => error,
-    refresh,
+    refresh: () => refresh(),
     start() {
       if (timer) return;
       void refresh();
@@ -118,7 +151,9 @@ export function createChainReader(opts: {
     },
     stop() {
       if (timer) clearInterval(timer);
+      if (retryTimer) clearTimeout(retryTimer);
       timer = null;
+      retryTimer = null;
     },
     onUpdate(fn) {
       listeners.push(fn);
