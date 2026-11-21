@@ -18,6 +18,7 @@ const state = (updatedAt: string): LoanState => ({
   updatedAt,
   loans: views,
   byId: new Map(views.map((v) => [v.id, v])),
+  raw: [],
 });
 const fakeReader = (s: LoanState | null, error: string | null = null): ChainReader => ({
   current: () => s,

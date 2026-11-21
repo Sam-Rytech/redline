@@ -1,7 +1,12 @@
 # Redline database
 
-SQLite through `better-sqlite3`, one file on the server's persistent volume (`DATABASE_PATH`).
-This replaces the sketch in `ARCHITECTURE.md` section 4; where they differ, this file wins.
+SQLite through Node's built-in `node:sqlite` module, one file on the server's persistent volume
+(`DATABASE_PATH`, default `./data/redline.db`). This replaces the sketch in `ARCHITECTURE.md`
+section 4; where they differ, this file wins.
+
+Why `node:sqlite` and not `better-sqlite3`: it ships with Node 22, so there is no native module
+to compile on Windows or on the host. Node prints a one-line "experimental" notice at start-up;
+the API used here (`DatabaseSync`, `backup`) is stable in Node 22.23.
 
 Why SQLite: one always-on server, a few hundred rows of real state, no second process to
 run. The chain itself is the source of truth for loans; the database holds only what chain
@@ -10,14 +15,16 @@ data cannot: who is watching what, sessions, invoices and alert history.
 ## Rules
 
 - Migrations are numbered SQL files in `apps/server/migrations/` (`0001_init.sql`, ...),
-  applied in order at start-up inside a transaction, recorded in `schema_migrations`. Applied
-  files are never edited; a change is a new file.
+  applied in order at start-up, each inside its own transaction, recorded in
+  `schema_migrations`. Applied files are never edited; a change is a new file. The runner
+  creates `schema_migrations` itself, so `0001_init.sql` holds every other table below.
 - `PRAGMA journal_mode = WAL`, `foreign_keys = ON`, `busy_timeout = 5000`.
 - Timestamps are unix seconds (integers), UTC. IDs generated server side are 128 bit random,
   hex.
 - No xpub, signed transaction hex, or full birth date is ever stored (`SECURITY.md`).
 - Backups: nightly copy of the file using SQLite's online backup, kept 7 days, on a separate
-  volume or storage.
+  volume or storage. Set `BACKUP_DIR` to that location; backups are off when it is unset.
+  Files are named `redline-YYYY-MM-DD.db`.
 
 ## Tables
 
@@ -134,8 +141,9 @@ CREATE TABLE loan_snapshots (
 
 | Data | Kept |
 |---|---|
-| Expired sessions, used or expired challenges | purged hourly |
-| Telegram link tokens | purged after expiry |
+| Expired sessions | purged hourly |
+| Challenges expired or used more than an hour ago | purged hourly |
+| Telegram link tokens | purged hourly once expired or used |
 | `alerts_sent` | 90 days |
-| `loan_snapshots` | 30 days (about 20,000 rows a day at current size) |
+| `loan_snapshots` | 30 days, measured as 4,320 blocks (144 a day) below the newest snapshot, since the table has no timestamp. One row per loan per block: about 28,000 rows a day at 194 loans |
 | Account and everything under it | until `DELETE /api/me` |

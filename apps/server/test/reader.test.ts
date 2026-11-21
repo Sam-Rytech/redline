@@ -46,6 +46,7 @@ describe("chain reader", () => {
     expect(s.updatedAt).toBe(NOW.toISOString());
     expect(s.loans).toHaveLength(1);
     expect(s.byId.get("a")).toBe(s.loans[0]);
+    expect(s.raw).toEqual([A]); // the decoded loans, kept for loan_snapshots
     expect(r.lastError()).toBeNull();
   });
 
