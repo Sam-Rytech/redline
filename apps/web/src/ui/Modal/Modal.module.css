@@ -1,0 +1,73 @@
+/* Modal: frosted ring, red band with the gauge over cloud shapes, white body. */
+.root { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: var(--space-4); }
+.scrim { position: absolute; inset: 0; background: var(--scrim); backdrop-filter: blur(6px); }
+.ring {
+  position: relative; width: min(100%, 26rem); max-height: calc(100dvh - 2 * var(--space-4)); overflow: auto;
+  padding: var(--ring); border-radius: calc(var(--radius-panel) + var(--ring));
+  background: var(--ring-bg); backdrop-filter: blur(14px);
+  box-shadow: 0 40px 90px rgb(20 16 14 / 0.28), inset 0 0 0 1px var(--ring-edge);
+  outline: none;
+}
+.card { overflow: hidden; border-radius: var(--radius-panel); background: var(--bg-elevated); }
+
+.band {
+  position: relative; height: 200px; overflow: hidden;
+  background: linear-gradient(var(--brand-red) 93%, var(--bg-elevated) 93%);
+}
+.bandBad { background: linear-gradient(#161513 93%, var(--bg-elevated) 93%); }
+.halo { position: absolute; width: 120px; height: 120px; border-radius: 50%; border: 18px solid rgb(255 255 255 / 0.12); }
+.haloA { left: -44px; top: -44px; }
+.haloB { right: -44px; top: -44px; }
+.spark { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: #fff; opacity: 0.85; }
+.sparkA { left: 22%; top: 26%; }
+.sparkB { right: 20%; top: 36%; width: 6px; height: 6px; }
+.sparkC { left: 30%; top: 54%; width: 4px; height: 4px; }
+.art {
+  position: absolute; left: 50%; top: 30px; height: 104px; width: auto; translate: -50% 0; overflow: visible;
+  filter: drop-shadow(0 12px 18px rgb(0 0 0 / 0.22));
+}
+.ribbon { fill: none; stroke: #fff; stroke-linejoin: round; stroke-linecap: butt; }
+.bandBad .ribbon { stroke: var(--brand-red); }
+.clouds {
+  position: absolute; left: -10%; right: -10%; bottom: -6px; height: 84px;
+  background:
+    radial-gradient(60px 50px at 8% 70%, var(--bg-elevated) 98%, transparent 100%),
+    radial-gradient(70px 56px at 24% 92%, var(--bg-elevated) 98%, transparent 100%),
+    radial-gradient(58px 46px at 40% 96%, var(--bg-elevated) 98%, transparent 100%),
+    radial-gradient(66px 52px at 60% 96%, var(--bg-elevated) 98%, transparent 100%),
+    radial-gradient(70px 58px at 78% 88%, var(--bg-elevated) 98%, transparent 100%),
+    radial-gradient(64px 54px at 94% 66%, var(--bg-elevated) 98%, transparent 100%),
+    linear-gradient(transparent 70%, var(--bg-elevated) 70%);
+}
+.clouds::before {
+  content: ""; position: absolute; inset: -16px 0 auto; height: 60px;
+  background:
+    radial-gradient(54px 40px at 14% 90%, rgb(255 255 255 / 0.32) 98%, transparent 100%),
+    radial-gradient(60px 44px at 86% 86%, rgb(255 255 255 / 0.32) 98%, transparent 100%);
+}
+
+.body {
+  position: relative; margin-top: -1px; display: grid; justify-items: center; gap: var(--space-3);
+  padding: var(--space-1) var(--space-8) var(--space-8); text-align: center;
+}
+.title { font-family: var(--font-display); font-size: var(--text-title); font-weight: 800; line-height: var(--lead-title); letter-spacing: -0.01em; }
+.text { display: grid; gap: var(--space-2); justify-items: center; max-width: 22rem; color: var(--label-2); line-height: var(--lead-prose); overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-2); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .art { animation: float 3.6s 1.2s ease-in-out infinite; }
+  .ribbon { stroke-dasharray: 1; animation: draw 1s 160ms cubic-bezier(0.65, 0, 0.35, 1) both; }
+  .spark { animation: twinkle 2.8s ease-in-out infinite; }
+  .sparkB { animation-delay: 0.9s; }
+  .sparkC { animation-delay: 1.7s; }
+  .halo { animation: drift 7s ease-in-out infinite alternate; }
+}
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes float { 50% { transform: translateY(-7px) rotate(-2deg); } }
+@keyframes twinkle { 50% { opacity: 0.25; } }
+@keyframes drift { to { transform: translate(8px, 6px); } }
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .scrim, .ring { backdrop-filter: none; }
+  .ring { background: var(--bg-base); }
+}

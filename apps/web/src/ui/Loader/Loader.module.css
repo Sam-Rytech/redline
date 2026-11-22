@@ -1,0 +1,2 @@
+.root { position: fixed; inset: 0; z-index: 100; background: var(--bg-grouped); box-shadow: 0 30px 60px rgb(22 21 19 / 0.18); }
+.svg { position: absolute; inset: 0; display: block; }

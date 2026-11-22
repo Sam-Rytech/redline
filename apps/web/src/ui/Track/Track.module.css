@@ -1,0 +1,17 @@
+.track { display: grid; gap: var(--space-2); width: 100%; }
+.rail { position: relative; height: 18px; }
+.rail::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 4px; translate: 0 -50%;
+  border-radius: var(--radius-pill); background: var(--separator);
+}
+.tick { position: absolute; top: 50%; width: 1px; height: 8px; translate: -50% -50%; background: var(--label-3); opacity: 0.5; }
+.zone { position: absolute; right: 0; top: 50%; height: 6px; translate: 0 -50%; border-radius: 0 var(--radius-pill) var(--radius-pill) 0; background: var(--brand-red); }
+.line { position: absolute; top: 0; bottom: 0; width: 2px; translate: -50% 0; background: var(--brand-red); border-radius: 1px; }
+.dot {
+  position: absolute; top: 50%; width: 14px; height: 14px; translate: -50% -50%; border-radius: 50%;
+  background: var(--label); box-shadow: 0 0 0 3px var(--bg-base);
+}
+.labels { position: relative; height: 1em; color: var(--label-3); }
+.labels span { position: absolute; top: 0; }
+.labels span:first-child { left: 0; }
+.redLabel { color: var(--brand-red-text); }

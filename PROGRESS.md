@@ -135,6 +135,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 | 21 Nov | "Loan gone" needs 3 consecutive reads; a read missing over 20% of loans is discarded; stale data sends no alerts | A partial Fulcrum answer must not produce false alerts |
 | 21 Nov | Red is the strong accent (logo, loader, primary button); the critical band always carries its word and needle position | Owner's brand call; colour is never the only signal |
 | 21 Nov | Hero is one real object, a race tachometer with a shift light, that moves through the landing page on scroll | Name origin, the alarm and the loan reading in one object (`docs/BRAND.md`) |
+| 21 Nov | Web styling is CSS Modules on the design tokens, not Tailwind | Fewer class strings in markup; the tokens already exist as CSS variables |
 | 21 Nov | Docs set added in `docs/`: PRD, security, database, design, brand, compliance, practices | Teammate reads them on pull |
 
 ---

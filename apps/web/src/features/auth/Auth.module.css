@@ -1,0 +1,12 @@
+.page { max-width: 560px; margin: 0 auto; padding: var(--space-12) var(--gutter) var(--space-16); display: grid; }
+.panel { composes: card from "../../ui/Card/Card.module.css"; display: grid; gap: var(--space-5); justify-items: start; }
+.kicker { color: var(--brand-red-text); }
+.title { font-size: clamp(2.5rem, 5vw, 4rem); }
+.body { color: var(--label-2); line-height: var(--lead-prose); }
+.field { display: grid; gap: var(--space-2); width: 100%; font-weight: 600; }
+.field input { min-height: var(--target-min); padding: 0 var(--space-4); border-radius: var(--radius-control); border: 1.5px solid var(--separator); background: var(--bg-elevated); font-weight: 400; }
+.err { color: var(--brand-red-text); line-height: var(--lead-prose); }
+.steps { margin: 0; padding-left: 1.25rem; display: grid; gap: var(--space-2); line-height: var(--lead-prose); color: var(--label-2); }
+@media (max-width: 800px) { .page { padding-top: var(--space-8); } }
+.status { color: var(--label); line-height: var(--lead-prose); }
+.address { display: block; margin-top: var(--space-2); color: var(--label); overflow-wrap: anywhere; text-transform: none; }
