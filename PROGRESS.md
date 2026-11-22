@@ -84,7 +84,7 @@ Sam-only tasks (need a human, accounts or a phone wallet): DoraHacks BUIDL, @Bot
 - [ ] A judge with no PUSD loan can still try it ("Watch any loan")
 - [ ] A judge can make a mainnet tx (Pro payment in BCH)
 - [ ] WizardConnect works with Paytaca and Selene
-- [ ] Top banner on the home page has: Widget Factory slides link · GitHub repo link · CashTokens address (`bitcoincash:z…`) · "Started 17 Nov 2026 — no pre-hackathon code"
+- [ ] Top banner on the home page has: Widget Factory slides link · GitHub repo link · CashTokens address (`bitcoincash:z…`) · "First commit 20 Nov 2026, no pre-hackathon code"
 - [ ] Repo is public; README explains setup, architecture, and the sign-in protocol
 - [ ] Footer: "Independent project, not affiliated with ParyonUSD"
 - [ ] DoraHacks BUIDL submitted with demo, repo, slides links

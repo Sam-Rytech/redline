@@ -8,7 +8,7 @@ loan from the chain, shows how close each one is to that line, and sends a Teleg
 a watched loan gets there. It also shows loans whose debt was paid off by redemptions but which
 still hold BCH their owners have not claimed.
 
-Independent project, not affiliated with ParyonUSD. Built for BCH BLAZE 2026; started 17 Nov 2026,
+Independent project, not affiliated with ParyonUSD. Built for BCH BLAZE 2026; first commit 20 Nov 2026,
 no pre-hackathon code. Live site: https://redline-vert-three.vercel.app (API: https://redline-bch.fly.dev/api/health).
 
 ## What it does

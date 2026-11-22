@@ -276,7 +276,7 @@ Env vars: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGI
 | WizardConnect or XO | WizardConnect for sign-in and payment |
 | Live demo, one click | `https://<app>` with "Watch any loan" so judges without a loan can try it |
 | Banner: Widget Factory slides, repo, CashTokens address | Persistent top banner on every page |
-| Pre-existing work | None — banner states "Started 17 Nov 2026, no pre-hackathon code" |
+| Pre-existing work | None — banner states "First commit 20 Nov 2026, no pre-hackathon code" |
 | Telegram check-in + roll call | Done (verify roll-call timestamp < 14 Nov 19:25) |
 
 ---
