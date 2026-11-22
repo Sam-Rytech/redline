@@ -1,0 +1,180 @@
+/*
+  Redline design tokens. Source of truth for DESIGN.md.
+  Copy into apps/web/src/styles/tokens.css. Components use these variables only:
+  no raw hex, no arbitrary spacing, no other radii.
+  Contrast (WCAG ratio) measured for every text token against its background layers.
+*/
+
+:root {
+  color-scheme: light dark;
+
+  /* Type: display and mono are self-hosted via Fontsource; body uses the system stack. */
+  --font-display: "Archivo Variable", system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --display-stretch: 62%;  /* condensed width for headlines */
+
+  --text-display: 2.25rem;   /* big numbers: collateral ratio, liquidation price */
+  --text-title: 1.75rem;     /* screen titles */
+  --text-body: 1rem;         /* body and headline; headline is weight 600 */
+  --text-footnote: 0.8125rem;/* captions, chips, legal; 13px, never smaller */
+  --lead-display: 1.07;
+  --lead-title: 1.09;
+  --lead-ui: 1.16;           /* labels, buttons, rows */
+  --lead-prose: 1.55;        /* paragraphs people read */
+
+  /* Spacing: one scale, no other values. 16 is the default gutter. */
+  --space-1: 0.25rem;  /* 4 */
+  --space-2: 0.5rem;   /* 8 */
+  --space-3: 0.75rem;  /* 12 */
+  --space-4: 1rem;     /* 16 */
+  --space-5: 1.25rem;  /* 20 */
+  --space-6: 1.5rem;   /* 24 */
+  --space-8: 2rem;     /* 32 */
+  --space-10: 2.5rem;  /* 40 */
+  --space-12: 3rem;    /* 48 */
+  --space-16: 4rem;    /* 64 */
+
+  --target-min: 44px;  /* hit region, not visual size */
+  --gutter: max(var(--space-4), env(safe-area-inset-left));
+
+  /* Radius */
+  --radius-chip: 6px;   /* chips, badges */
+  --radius-control: 10px; /* buttons, inputs */
+  --radius-card: 14px;  /* loan cards, list groups */
+  --radius-sheet: 20px; /* bottom sheets */
+  --radius-panel: 28px; /* ticket cards, modal cards */
+  --radius-pill: 999px;
+  --ring: 14px;         /* frosted ring around a modal card */
+
+  /* Elevation: 0 flat content, 1 sheet/popover, 2 modal. Cards are NOT elevated. */
+  --elev-0: none;
+  --elev-1: 0 -2px 24px rgb(0 0 0 / 0.10);
+  --elev-2: 0 8px 40px rgb(0 0 0 / 0.18);
+
+  /* Motion */
+  --dur-state: 120ms;   /* hover, press, toggle */
+  --dur-base: 220ms;    /* appear, disappear */
+  --dur-sheet: 320ms;   /* sheets, modals */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Light */
+:root,
+:root[data-theme="light"] {
+  --bg-base: #F5F1E8;        /* bone: cards */
+  --bg-grouped: #E9E6E0;     /* concrete: the page */
+  --bg-elevated: #FFFFFF;    /* sheets, modals */
+  --label: #161513;          /* ink: 16.2:1 on base, 14.7:1 on grouped */
+  --label-2: #55524D;        /* 6.9:1 on base, 6.2:1 on grouped */
+  --label-3: #5F5B55;        /* 5.4:1 on grouped */
+  --separator: #D2CEC6;
+  --focus-ring: #161513;
+
+  --action-bg: #BE2418;      /* primary button: deep red */
+  --action-label: #F5F1E8;   /* 5.4:1 on action-bg */
+
+  --brand-red: #E5321F;      /* fills and large display only: 3.5:1 on concrete */
+  --brand-red-text: #BE2418; /* red at text size: 4.9:1 on concrete, 5.4:1 on bone */
+  --brand-steel: #7D7A72;    /* bezel grey, decorative only */
+
+  --risk-safe: #1B7342;      --risk-safe-bg: #E3F2E9;  /* 4.7:1 on concrete */
+  --risk-watch: #7F5800;     --risk-watch-bg: #FBF0D2; /* 5.1:1 on concrete */
+  --risk-danger: #A94A08;    --risk-danger-bg: #FBE6D6;/* 4.6:1 on concrete */
+  --risk-critical: #BE2418;  --risk-critical-bg: #FBE1DF;
+
+  --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
+  --glass-border: rgb(0 0 0 / 0.08);
+
+  --lift-layer: #D6D1C7;     /* the stone slab under a ticket card */
+  --scrim: rgb(20 16 14 / 0.42);
+  --ring-bg: rgb(255 253 249 / 0.45);
+  --ring-edge: rgb(255 255 255 / 0.6);
+}
+
+/* Shared by both themes once --lift-layer is set. */
+:root {
+  --lift: 0 16px 0 -8px var(--lift-layer);
+  --lift-raised: 0 22px 0 -8px var(--lift-layer);
+}
+
+/* Dark: follows the OS unless data-theme="light" is set; data-theme="dark" forces it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-base: #121110;
+    --bg-grouped: #1B1A18;
+    --bg-elevated: #242220;
+    --label: #F3F1ED;
+    --label-2: #BAB6AF;
+    --label-3: #9A968F;
+    --separator: #3A3733;
+    --focus-ring: #F3F1ED;
+    --action-bg: #BE2418;
+    --action-label: #F5F1E8;
+    --brand-red: #E5321F;      /* 4.2:1 on base: fills and large display only */
+    --brand-red-text: #FF7068; /* 6.8:1 on base */
+    --brand-steel: #7D7A72;
+    --risk-safe: #5CCB8A;      --risk-safe-bg: #16301F;
+    --risk-watch: #E3B341;     --risk-watch-bg: #35290A;
+    --risk-danger: #F08A4B;    --risk-danger-bg: #38200E;
+    --risk-critical: #FF7068;  --risk-critical-bg: #3B1614;
+    --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
+    --glass-border: rgb(255 255 255 / 0.10);
+    --lift-layer: #2E2B28;
+    --scrim: rgb(0 0 0 / 0.55);
+    --ring-bg: rgb(60 56 52 / 0.45);
+    --ring-edge: rgb(255 255 255 / 0.12);
+  }
+}
+:root[data-theme="dark"] {
+  --bg-base: #121110;
+  --bg-grouped: #1B1A18;
+  --bg-elevated: #242220;
+  --label: #F3F1ED;
+  --label-2: #BAB6AF;
+  --label-3: #9A968F;
+  --separator: #3A3733;
+  --focus-ring: #F3F1ED;
+  --action-bg: #BE2418;
+  --action-label: #F5F1E8;
+  --brand-red: #E5321F;
+  --brand-red-text: #FF7068;
+  --brand-steel: #7D7A72;
+  --risk-safe: #5CCB8A;      --risk-safe-bg: #16301F;
+  --risk-watch: #E3B341;     --risk-watch-bg: #35290A;
+  --risk-danger: #F08A4B;    --risk-danger-bg: #38200E;
+  --risk-critical: #FF7068;  --risk-critical-bg: #3B1614;
+  --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
+  --glass-border: rgb(255 255 255 / 0.10);
+  --lift-layer: #2E2B28;
+  --scrim: rgb(0 0 0 / 0.55);
+  --ring-bg: rgb(60 56 52 / 0.45);
+  --ring-edge: rgb(255 255 255 / 0.12);
+}
+
+/* Glass: navigation and controls only, never content surfaces. */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--glass-border);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .glass { background: var(--bg-base); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass { background: var(--bg-base); backdrop-filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
