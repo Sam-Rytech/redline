@@ -1,25 +1,39 @@
 /* Slim ink strip above the navbar. Scrolls away with the page; the navbar stays pinned. */
 .banner {
-  position: relative; z-index: 41; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  gap: 0 var(--space-6); padding: 0 var(--gutter); min-height: var(--target-min);
-  background: #161513; color: #BAB6AF;
+  position: relative; z-index: 41; display: flex; align-items: center; gap: var(--space-2) var(--space-6);
+  padding: 0 var(--gutter); min-height: var(--target-min); background: #161513; color: #BAB6AF;
 }
-.event { color: #F5F1E8; }
+.event { flex: none; color: #F5F1E8; }
+.nowrap { white-space: nowrap; }
 .started { flex: 1 1 auto; }
-.links { display: flex; align-items: center; gap: var(--space-5); }
-.links a { display: inline-flex; align-items: center; min-height: var(--target-min); color: #F5F1E8; text-transform: none; text-decoration: underline; text-underline-offset: 3px; }
-.links a:hover { color: #FF7068; }
-.address {
-  display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); max-width: 42ch;
+.icons { flex: none; display: flex; align-items: center; gap: var(--space-2); }
+.icon {
+  position: relative; display: inline-flex; align-items: center; gap: var(--space-2); height: 32px; padding: 0 var(--space-3);
+  border: 1px solid rgb(245 241 232 / 0.18); border-radius: var(--radius-pill); color: #F5F1E8; text-decoration: none; text-transform: none;
+  transition: background-color var(--dur-state) var(--ease-out), color var(--dur-state);
+}
+.icon::before { content: ""; position: absolute; inset: -6px; }
+.icon:hover { background: rgb(245 241 232 / 0.08); color: #FF7068; }
+.icon svg { width: 16px; height: 16px; fill: currentColor; }
+.address { flex: none;
+  display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--target-min); min-width: 0;
   padding: 0; border: 0; background: none; color: #F5F1E8; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: none;
 }
 .addressLabel { flex: none; color: #BAB6AF; text-transform: uppercase; }
 .addressText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copy { flex: none; color: #FF7068; text-transform: uppercase; }
 .missing { color: #161513; background: #FF7068; padding: 2px var(--space-2); border-radius: var(--radius-chip); }
-@media (max-width: 860px) {
-  .banner { padding-block: var(--space-2); }
-  .started { order: 3; flex-basis: 100%; line-height: var(--lead-prose); }
-  .links { gap: var(--space-4); }
-  .address { max-width: 30ch; }
+
+/* Up to small laptops: event and icons, then the address, then the first-commit line. */
+@media (max-width: 1200px) {
+  .banner {
+    display: grid; grid-template-columns: 1fr auto; grid-template-areas: "event icons" "address address" "started started";
+    gap: 0 var(--space-3); padding-block: var(--space-2);
+  }
+  .event { grid-area: event; }
+  .icons { grid-area: icons; }
+  .icon { width: 36px; height: 36px; padding: 0; justify-content: center; }
+  .iconLabel { display: none; }
+  .address, .missing { grid-area: address; justify-self: start; max-width: 100%; }
+  .started { grid-area: started; line-height: var(--lead-prose); }
 }
