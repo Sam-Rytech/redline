@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
 // The BLAZE banner must carry these in any production build.
-const BANNER_VARS = ["VITE_BLAZE_SLIDES_URL", "VITE_BLAZE_TOKEN_ADDRESS"];
+const BANNER_VARS = ["VITE_BLAZE_TOKEN_ADDRESS"];
 
 // In development, /api goes to the mock API (pnpm dev:mock). In production Vercel rewrites it.
 export default defineConfig(({ command, mode }) => {
