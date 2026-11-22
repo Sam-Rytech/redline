@@ -6,7 +6,7 @@ import { pairWallet, useWallet } from "../../lib/wallet";
 import { Button, ButtonLink } from "../../ui/Button";
 import { WalletQr } from "../../ui/WalletQr";
 import { AgeScreen } from "./AgeScreen";
-import { readAge, type AgeResult } from "./age";
+import { clearAge, readAge, type AgeResult } from "./age";
 import { Reveal } from "../../ui/Reveal";
 import s from "./Auth.module.css";
 
@@ -35,6 +35,12 @@ export function SignIn() {
       await wizardLogin({ manager: conn.manager, onStep: (st) => setStep(st) });
       navigate("/me");
     } catch (e) {
+      // the server has no valid age check for this browser: show the age screen again
+      if (e instanceof LoginError && e.serverCode === "age_required") {
+        clearAge();
+        setAge(null);
+        return;
+      }
       const address = e instanceof LoginError ? e.address : undefined;
       setErr({ message: (e as Error).message, address });
     } finally {
