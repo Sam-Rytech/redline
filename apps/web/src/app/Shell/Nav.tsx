@@ -3,14 +3,9 @@ import { Fragment, useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router";
 import { ButtonLink } from "../../ui/Button";
 import { Logo } from "../../ui/Logo";
+import { APP_LINKS as LINKS } from "./links";
 import s from "./Nav.module.css";
 
-const LINKS = [
-  { to: "/loans", label: "Loans" },
-  { to: "/alerts", label: "Alerts" },
-  { to: "/pro", label: "Pro pass" },
-  { to: "/me", label: "My loans" },
-];
 
 /** Clear over the page at the top, frosted once you scroll. Links fold into a menu on phones. */
 export function Nav() {

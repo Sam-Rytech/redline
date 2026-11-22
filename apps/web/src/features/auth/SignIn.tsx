@@ -7,6 +7,7 @@ import { Button, ButtonLink } from "../../ui/Button";
 import { WalletQr } from "../../ui/WalletQr";
 import { AgeScreen } from "./AgeScreen";
 import { readAge, type AgeResult } from "./age";
+import { Reveal } from "../../ui/Reveal";
 import s from "./Auth.module.css";
 
 const STEP: Record<LoginStep, string> = {
@@ -56,15 +57,18 @@ export function SignIn() {
 
   return (
     <main className={s.page}>
-      {age === null && <AgeScreen onResult={setAge} />}
+      {age === null && <Reveal from="pop"><AgeScreen onResult={setAge} /></Reveal>}
       {age === "under" && (
+        <Reveal from="pop">
         <section className={s.panel}>
           <h1 className={`${s.title} display`}>Redline is not available</h1>
           <p className={s.body}>We can't create an account for you. You can still look at every loan without signing in.</p>
           <ButtonLink to="/loans" variant="quiet">See every loan</ButtonLink>
         </section>
+        </Reveal>
       )}
       {age === "ok" && (
+        <Reveal from="pop">
         <section className={s.panel}>
           <p className={`${s.kicker} mono`}>Step 2 of 2</p>
           <h1 className={`${s.title} display`}>Sign in with your wallet</h1>
@@ -94,6 +98,7 @@ export function SignIn() {
             <Button variant="quiet" onClick={demo}>Use demo wallet (mock server)</Button>
           )}
         </section>
+        </Reveal>
       )}
     </main>
   );

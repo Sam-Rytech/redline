@@ -7,6 +7,7 @@ import { useLoans } from "../../lib/useLoans";
 import { Button } from "../../ui/Button";
 import { LoanCard } from "./LoanCard";
 import { LoanDetail } from "./LoanDetail";
+import { Reveal, RevealGroup } from "../../ui/Reveal";
 import s from "./Loans.module.css";
 
 type Filter = "all" | "near" | "stranded";
@@ -35,14 +36,14 @@ export function LoansPage() {
 
   return (
     <main className={s.page}>
-      <header className={s.head}>
-        <h1 className={`${s.h1} display`}>Every loan</h1>
-        <p className={s.lead}>
+      <RevealGroup as="header" from="none" className={s.head}>
+        <Reveal as="h1" className={`${s.h1} display`}>Every loan</Reveal>
+        <Reveal as="p" className={s.lead}>
           {data ? `${data.summary.total} ParyonUSD loans, read from block ${data.blockHeight}. BCH at ${fmtUsd(data.priceUsd)}.` : "Reading the chain."}
-        </p>
-      </header>
+        </Reveal>
+      </RevealGroup>
 
-      <div className={s.tools}>
+      <Reveal delay={0.15} className={s.tools}>
         <label className={s.search}>
           <span className="visually-hidden">Find a loan by id</span>
           <input type="search" placeholder="Find a loan by id" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -54,7 +55,7 @@ export function LoansPage() {
             </button>
           ))}
         </div>
-      </div>
+      </Reveal>
 
       {error && (
         <div className={s.empty} role="alert">
@@ -66,8 +67,10 @@ export function LoansPage() {
       <LayoutGroup>
         <div className={s.list} aria-busy={loading}>
           {loading && !data && Array.from({ length: 6 }, (_, i) => <div key={i} className={s.skeleton} />)}
-          {loans.map((l) => (
-            <LoanCard key={l.id} loan={l} to={`/loans/${l.id}${params.size ? `?${params}` : ""}`} />
+          {loans.map((l, i) => (
+            <Reveal key={l.id} from="pop" delay={(i % 3) * 0.06} className={s.cardSlot}>
+              <LoanCard loan={l} to={`/loans/${l.id}${params.size ? `?${params}` : ""}`} />
+            </Reveal>
           ))}
           {data && loans.length === 0 && (
             <div className={s.empty}>

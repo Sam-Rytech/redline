@@ -5,6 +5,7 @@ import heroSmall from "../../assets/tacho/hero-512.webp";
 import { fmtInt, fmtPct, fmtUsd } from "../../lib/format";
 import { useReducedMotion } from "../../lib/useReducedMotion";
 import { ButtonLink } from "../../ui/Button";
+import { Reveal, RevealGroup } from "../../ui/Reveal";
 import s from "./Hero.module.css";
 
 export function Hero({ data }: { data: LoansResponse | null }) {
@@ -32,23 +33,23 @@ export function Hero({ data }: { data: LoansResponse | null }) {
         alt="A Redline loan gauge: a tachometer reading collateral ratio, with a red zone at 110 percent and a warning lamp on top"
         fetchPriority="high"
       />
-      <h1 id="hero-title" className={`${s.title} display`}>
-        <span className={s.top}>Don't let<br />liquidation</span>
-        <span className={s.bottom}>catch you<br />off guard.</span>
-      </h1>
-      <dl className={`${s.readout} mono num`}>
+      <RevealGroup as="h1" from="none" each={0.16} id="hero-title" className={`${s.title} display`}>
+        <Reveal as="span" from="left" className={s.top}>Don't let<br />liquidation</Reveal>
+        <Reveal as="span" from="right" className={s.bottom}>catch you<br />off guard.</Reveal>
+      </RevealGroup>
+      <Reveal as="dl" delay={0.35} className={`${s.readout} mono num`}>
         <div><dt>Loans watched</dt><dd>{data ? fmtInt(data.summary.total) : "--"}</dd></div>
         <div><dt>Lowest ratio</dt><dd>{lowest !== undefined && lowest !== null ? fmtPct(lowest) : "--"}</dd></div>
         <div><dt>BCH</dt><dd>{data ? fmtUsd(data.priceUsd) : "--"}</dd></div>
-      </dl>
-      <p className={s.lead}>
+      </Reveal>
+      <Reveal as="p" delay={0.3} className={s.lead}>
         Get Telegram alerts before your ParyonUSD loan reaches liquidation, so you have time to add collateral or repay.
-      </p>
-      <div className={s.actions}>
-        <ButtonLink to="/sign-in" beckon>Watch my loan</ButtonLink>
-        <ButtonLink to="/loans" variant="quiet">Explore loans</ButtonLink>
-      </div>
-      <p className={`${s.sub} mono`}>Liquidation monitoring for ParyonUSD</p>
+      </Reveal>
+      <RevealGroup from="none" delay={0.4} className={s.actions}>
+        <Reveal from="pop"><ButtonLink to="/sign-in" beckon>Watch my loan</ButtonLink></Reveal>
+        <Reveal from="pop"><ButtonLink to="/loans" variant="quiet">Explore loans</ButtonLink></Reveal>
+      </RevealGroup>
+      <Reveal as="p" delay={0.55} className={`${s.sub} mono`}>Liquidation monitoring for ParyonUSD</Reveal>
     </section>
   );
 }

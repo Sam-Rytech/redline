@@ -6,6 +6,7 @@ import { useApi } from "../../lib/useApi";
 import { useMe } from "../../lib/useMe";
 import { Button, ButtonLink } from "../../ui/Button";
 import { SignInPrompt } from "./SignInPrompt";
+import { Reveal } from "../../ui/Reveal";
 import s from "./Account.module.css";
 
 export function Alerts() {
@@ -37,10 +38,11 @@ export function Alerts() {
 
   return (
     <main className={s.page}>
-      <h1 className={`${s.h1} display`}>Alerts</h1>
+      <Reveal as="h1" className={`${s.h1} display`}>Alerts</Reveal>
       {signedOut && <SignInPrompt what="get alerts in Telegram" />}
       {me && (
         <>
+          <Reveal from="left" delay={0.1}>
           <section className={s.block}>
             <h2 className={s.h2}>Telegram</h2>
             {me.telegramLinked ? (
@@ -57,6 +59,8 @@ export function Alerts() {
               </>
             )}
           </section>
+          </Reveal>
+          <Reveal from="right" delay={0.2}>
           <section className={s.block}>
             <h2 className={s.h2}>Watched loans</h2>
             <p className={s.body}>Liquidation alerts come at 25%, 15% and 8% from the line. Loan-gone alerts come when a loan closes or is liquidated.</p>
@@ -77,6 +81,7 @@ export function Alerts() {
             </ul>
             {!me.pro && <p className={s.small}>Loan-gone alerts and more than one watch come with the Pro pass.</p>}
           </section>
+          </Reveal>
           {err && <p className={s.err} role="alert">{err}</p>}
         </>
       )}
