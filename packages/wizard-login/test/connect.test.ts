@@ -29,7 +29,12 @@ vi.mock("@wizardconnect/core", async (importOriginal) => {
   };
 });
 
-const { connectWallet } = await import("../src/client/connect.js");
+const { connectWallet, PATHS_WAIT_MS } = await import("../src/client/connect.js");
+
+const PATHS = [{ name: "receive", xpub: "x" }, { name: "change", xpub: "y" }];
+const withPaths = (m: { getSessionPaths: () => unknown }) => {
+  m.getSessionPaths = () => PATHS;
+};
 
 beforeEach(() => {
   relay.statusCallback = null;
@@ -43,6 +48,7 @@ describe("connectWallet", () => {
     expect(relay.statusCallback).toBeTypeOf("function");
     expect(c.walletName()).toBeNull();
     c.manager.walletName = "Paytaca";
+    withPaths(c.manager as never);
     c.manager.emit("walletready", {} as never);
     await expect(c.ready).resolves.toBeUndefined();
     expect(c.walletName()).toBe("Paytaca");
@@ -50,6 +56,50 @@ describe("connectWallet", () => {
     expect(relay.cleanup).toBe(1);
     await c.close(); // idempotent
     expect(relay.cleanup).toBe(1);
+  });
+
+  it("waits for the paths when the first walletready has none (Selene)", async () => {
+    const c = connectWallet();
+    let done = false;
+    void c.ready.then(() => (done = true));
+    c.manager.emit("walletready", {} as never); // no paths yet
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    withPaths(c.manager as never);
+    c.manager.emit("walletready", {} as never);
+    await expect(c.ready).resolves.toBeUndefined();
+    await c.close();
+  });
+
+  it("picks up paths that arrive without another walletready", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = connectWallet();
+      c.manager.emit("walletready", {} as never);
+      withPaths(c.manager as never);
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(c.ready).resolves.toBeUndefined();
+      await c.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops waiting for paths after PATHS_WAIT_MS, so the caller gets a clear no_paths error", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = connectWallet();
+      let done = false;
+      void c.ready.then(() => (done = true));
+      c.manager.emit("walletready", {} as never);
+      await vi.advanceTimersByTimeAsync(PATHS_WAIT_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expect(done).toBe(true);
+      await c.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects ready when the wallet disconnects before it is ready", async () => {
@@ -88,7 +138,8 @@ describe("connectWallet", () => {
     try {
       const c = connectWallet();
       c.manager.walletName = "Paytaca";
-      c.manager.emit("walletready", {} as never);
+      withPaths(c.manager as never);
+    c.manager.emit("walletready", {} as never);
       await c.ready;
       expect(c.manager.loadStoredSession()).toBeNull();
       await c.close();
