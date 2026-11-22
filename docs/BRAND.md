@@ -78,7 +78,7 @@ body size uses `#BE2418`.
 ## BLAZE banner
 
 A persistent top banner on every page, required by the hackathon: Widget Factory slides link,
-repo link, the CashTokens address (`bitcoincash:z...`), and "Started 17 Nov 2026, no
+repo link, the CashTokens address (`bitcoincash:z...`), and "First commit 20 Nov 2026, no
 pre-hackathon code". It is designed once as a slim strip using the same tokens so it reads as
 part of the product.
 

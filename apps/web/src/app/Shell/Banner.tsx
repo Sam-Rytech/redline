@@ -22,7 +22,7 @@ export function Banner() {
   return (
     <aside className={`${s.banner} mono`} aria-label="BCH BLAZE 2026 entry">
       <span className={s.event}>BCH BLAZE 2026</span>
-      <span className={s.started}>Started 17 Nov 2026, no pre-hackathon code</span>
+      <span className={s.started}>First commit 20 Nov 2026, no pre-hackathon code</span>
       <span className={s.links}>
         <a href={SLIDES_URL} target="_blank" rel="noreferrer">Slides</a>
         <a href={REPO_URL} target="_blank" rel="noreferrer">GitHub: Sam-Rytech/redline</a>
