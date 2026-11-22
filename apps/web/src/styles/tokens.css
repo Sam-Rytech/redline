@@ -6,7 +6,7 @@
 */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   /* Type: display and mono are self-hosted via Fontsource; body uses the system stack. */
   --font-display: "Archivo Variable", system-ui, sans-serif;
@@ -99,35 +99,9 @@
   --lift-raised: 0 22px 0 -8px var(--lift-layer);
 }
 
-/* Dark: follows the OS unless data-theme="light" is set; data-theme="dark" forces it. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg-base: #121110;
-    --bg-grouped: #1B1A18;
-    --bg-elevated: #242220;
-    --label: #F3F1ED;
-    --label-2: #BAB6AF;
-    --label-3: #9A968F;
-    --separator: #3A3733;
-    --focus-ring: #F3F1ED;
-    --action-bg: #BE2418;
-    --action-label: #F5F1E8;
-    --brand-red: #E5321F;      /* 4.2:1 on base: fills and large display only */
-    --brand-red-text: #FF7068; /* 6.8:1 on base */
-    --brand-steel: #7D7A72;
-    --risk-safe: #5CCB8A;      --risk-safe-bg: #16301F;
-    --risk-watch: #E3B341;     --risk-watch-bg: #35290A;
-    --risk-danger: #F08A4B;    --risk-danger-bg: #38200E;
-    --risk-critical: #FF7068;  --risk-critical-bg: #3B1614;
-    --glass-bg: color-mix(in srgb, var(--bg-base) 72%, transparent);
-    --glass-border: rgb(255 255 255 / 0.10);
-    --lift-layer: #2E2B28;
-    --scrim: rgb(0 0 0 / 0.55);
-    --ring-bg: rgb(60 56 52 / 0.45);
-    --ring-edge: rgb(255 255 255 / 0.12);
-  }
-}
+/* Light on every screen. Dark exists only behind data-theme="dark", which nothing sets yet. */
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg-base: #121110;
   --bg-grouped: #1B1A18;
   --bg-elevated: #242220;
