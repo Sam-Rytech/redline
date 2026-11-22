@@ -1,8 +1,7 @@
 import { useState } from "react";
+import { REPO_URL, SLIDES_URL } from "./links";
 import s from "./Banner.module.css";
 
-const REPO_URL = "https://github.com/Sam-Rytech/redline";
-const SLIDES_URL = "https://docs.google.com/presentation/d/1RhYt61YBA801_nemP1UZiWbBInaKmgN5Hq32Rngg35U/view";
 const TOKEN_ADDRESS: string | undefined = import.meta.env.VITE_BLAZE_TOKEN_ADDRESS || undefined;
 
 /** BCH BLAZE strip on every page: slides, source, CashTokens address and the start date. */

@@ -8,6 +8,14 @@ const LINE = 0.55;
 const MARK = 1.1;
 const HOLD = 0.4;
 const LIFT = 0.75;
+const LOADED_AT = performance.now();
+
+/** Seconds until the preloader has mostly lifted off the first screen; 0 once it has gone or with reduced motion. */
+export function introDelay(): number {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return 0;
+  const left = LINE + MARK + HOLD + LIFT * 0.55 - (performance.now() - LOADED_AT) / 1000;
+  return Math.max(0, left);
+}
 
 /**
  * Preloader on every full page load: a red line draws from the left edge at mid-height,

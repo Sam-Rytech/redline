@@ -6,6 +6,7 @@ import { useMe } from "../../lib/useMe";
 import { LoanCard } from "../loans/LoanCard";
 import { LoanDetail } from "../loans/LoanDetail";
 import { SignInPrompt } from "./SignInPrompt";
+import { Reveal } from "../../ui/Reveal";
 import s from "./Account.module.css";
 
 export function MyLoans() {
@@ -17,14 +18,20 @@ export function MyLoans() {
 
   return (
     <main className={s.page}>
-      <h1 className={`${s.h1} display`}>My loans</h1>
+      <Reveal as="h1" className={`${s.h1} display`}>My loans</Reveal>
       {signedOut && <SignInPrompt what="see the loans your wallet holds" />}
       {me && (
         <LayoutGroup>
           <div className={s.list} aria-busy={loading}>
-            {data?.map((l) => <LoanCard key={l.id} loan={l} to={`/me/loans/${l.id}`} />)}
+            {data?.map((l, i) => (
+              <Reveal key={l.id} from="pop" delay={(i % 3) * 0.06} className={s.cardSlot}>
+                <LoanCard loan={l} to={`/me/loans/${l.id}`} />
+              </Reveal>
+            ))}
             {data && data.length === 0 && (
-              <p className={s.prompt}>This wallet holds no ParyonUSD loans. Loans you open in Paryon show up here on the next block.</p>
+              <Reveal from="pop">
+                <p className={s.prompt}>This wallet holds no ParyonUSD loans. Loans you open in Paryon show up here on the next block.</p>
+              </Reveal>
             )}
           </div>
           <AnimatePresence>{open && <LoanDetail key={open.id} loan={open} onClose={() => navigate("/me")} />}</AnimatePresence>

@@ -1,0 +1,58 @@
+.header {
+  position: sticky; top: 0; z-index: 40; width: 100%;
+  background: color-mix(in srgb, var(--bg-grouped) 92%, transparent);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid var(--separator);
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .header { background: var(--bg-grouped); backdrop-filter: none; } }
+.bar { display: flex; align-items: center; height: 56px; padding-inline: var(--gutter); }
+@media (min-width: 48rem) { .bar { height: 64px; padding-inline: var(--space-6); } }
+@media (min-width: 72rem) { .bar { padding-inline: var(--space-8); } }
+.brand { display: inline-flex; align-items: center; min-height: var(--target-min); text-decoration: none; flex-shrink: 0; }
+
+.links { display: none; align-items: center; gap: var(--space-1); margin-left: var(--space-8); }
+@media (min-width: 52rem) { .links { display: flex; } }
+/* The link is the 44px hit area; the pill inside is what you see. */
+.link { display: inline-flex; align-items: center; min-height: var(--target-min); text-decoration: none; }
+.pill {
+  display: inline-flex; align-items: center; padding: 0.375rem 0.75rem; border-radius: var(--radius-control);
+  border: 1px solid transparent; font-size: 0.875rem; font-weight: 500; color: var(--label-2); white-space: nowrap;
+  transition: color var(--dur-state) var(--ease-out), background-color var(--dur-state) var(--ease-out);
+}
+.link:hover .pill { color: var(--label); background: rgb(0 0 0 / 0.05); }
+.active .pill {
+  color: var(--label); font-weight: 600; background: var(--bg-base);
+  border-color: var(--separator); box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+}
+
+.actions { display: flex; align-items: center; gap: var(--space-3); margin-left: auto; flex-shrink: 0; }
+.iconBtn {
+  display: inline-grid; place-items: center; width: var(--target-min); height: var(--target-min); border-radius: 50%;
+  background: var(--bg-base); border: 1px solid var(--separator); color: var(--label);
+  transition: color var(--dur-state) var(--ease-out), border-color var(--dur-state) var(--ease-out), transform var(--dur-state) var(--ease-out);
+}
+.iconBtn svg { width: 18px; height: 18px; fill: currentColor; }
+.iconBtn:hover { color: var(--brand-red-text); border-color: var(--brand-red-text); transform: translateY(-1px); }
+
+.toggle {
+  display: none; width: var(--target-min); height: var(--target-min); border-radius: 12px; cursor: pointer;
+  background: var(--bg-base); border: 1px solid var(--separator); place-items: center;
+}
+.bars, .bars::before { display: block; width: 18px; height: 2px; background: var(--label); border-radius: 2px; position: relative; transition: transform 220ms ease; }
+.bars::before { content: ""; position: absolute; top: 6px; left: 0; }
+.bars { transform: translateY(-3px); }
+.x { transform: translateY(0) rotate(45deg); }
+.x::before { transform: translateY(-6px) rotate(-90deg); }
+@media (max-width: 52rem) {
+  .cta { display: none; }
+  .toggle { display: grid; }
+}
+@media (max-width: 48rem) { .iconBtn { display: none; } }
+
+.menu { display: grid; gap: var(--space-1); padding: var(--space-2) var(--gutter) var(--space-6); border-top: 1px solid var(--separator); justify-items: start; }
+.menuLink {
+  display: flex; align-items: center; width: 100%; min-height: 52px; font-family: var(--font-display);
+  font-weight: 800; font-stretch: 75%; font-size: 1.75rem; color: var(--label); text-decoration: none;
+  border-bottom: 1px solid var(--separator);
+}
+.menuActive { color: var(--brand-red-text); }
+.menu > :last-child { margin-top: var(--space-4); }

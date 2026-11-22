@@ -4,10 +4,17 @@ import { heat, LIQUIDATION_RATIO } from "../../lib/gauge";
 import { fmtUsd } from "../../lib/format";
 import { useReducedMotion } from "../../lib/useReducedMotion";
 import { Gauge } from "../../ui/Gauge";
+import { SHEEN } from "./cord";
 import s from "./GaugeRun.module.css";
 
 const START_RATIO = 185;
 const END_RATIO = 96;
+
+// The braided cable in the gauge photo (1024 px square): centre line from the red sleeve to the image's
+// left edge, and its width, measured from the image's pixels.
+const PHOTO_PX = 1024;
+const BRAID: readonly (readonly [number, number])[] = [[116, 592.5], [96, 599.5], [72, 610.5], [48, 623], [24, 639], [0, 656.5]];
+const BRAID_WIDTH = 28.5;
 
 type Step = { below: number; kicker: string; title: string; body: string };
 const STEPS: Step[] = [
@@ -18,7 +25,7 @@ const STEPS: Step[] = [
 ];
 
 /** Scroll drives a falling BCH price: the needle climbs, the lamp lights, the stripes cross at 110%. */
-export function GaugeRun({ priceUsd, onCordX }: { priceUsd: number; onCordX: (x: number) => void }) {
+export function GaugeRun({ priceUsd, onCord }: { priceUsd: number; onCord: (x: number, width: number) => void }) {
   const ref = useRef<HTMLElement>(null);
   const reduce = useReducedMotion();
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end end"] });
@@ -31,34 +38,58 @@ export function GaugeRun({ priceUsd, onCordX }: { priceUsd: number; onCordX: (x:
   const step = [...STEPS].reverse().find((x) => ratio < x.below) ?? STEPS[0]!;
   const stageRef = useRef<HTMLDivElement>(null);
   const objRef = useRef<HTMLDivElement>(null);
-  const [cord, setCord] = useState<string | null>(null);
+  const [cord, setCord] = useState<{ d: string; shadow: string; w: number; fade: [number, number] } | null>(null);
 
-  // The cable leaves the photo at its left edge, 63% down. The cord runs from there to the
-  // bottom of the stage, where the next section picks it up at the same x.
+  // The cord is drawn over the photo's braided cable from the red sleeve down, so the whole cable is one
+  // material with no seam, then drops to the bottom of the stage, where the next section picks it up.
   useLayoutEffect(() => {
     const measure = () => {
       const stage = stageRef.current?.getBoundingClientRect();
       const obj = objRef.current?.getBoundingClientRect();
       if (!stage || !obj) return;
-      const sx = obj.left - stage.left + 2;
-      const sy = obj.top - stage.top + obj.height * 0.63;
-      const ex = Math.max(28, sx - 70);
-      const ey = stage.height + 2;
-      setCord(`M${sx} ${sy} C${sx - 60} ${sy + 10} ${ex} ${sy + 60} ${ex} ${Math.min(ey, sy + 160)} L${ex} ${ey}`);
-      onCordX(ex);
+      const kx = obj.width / PHOTO_PX, ky = obj.height / PHOTO_PX;
+      const pts = BRAID.map(([x, y]) => [obj.left - stage.left + x * kx, obj.top - stage.top + y * ky] as const);
+      const w = BRAID_WIDTH * kx;
+      const f = (n: number) => n.toFixed(1);
+      let d = `M${f(pts[0]![0])} ${f(pts[0]![1])}`;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i - 1] ?? pts[i]!, p1 = pts[i]!, p2 = pts[i + 1]!, p3 = pts[i + 2] ?? p2;
+        d += ` C${f(p1[0] + (p2[0] - p0[0]) / 6)} ${f(p1[1] + (p2[1] - p0[1]) / 6)} ${f(p2[0] - (p3[0] - p1[0]) / 6)} ${f(p2[1] - (p3[1] - p1[1]) / 6)} ${f(p2[0])} ${f(p2[1])}`;
+      }
+      const [sx, sy] = pts[pts.length - 1]!;
+      const [px, py] = pts[pts.length - 2]!;
+      const len = Math.hypot(sx - px, sy - py);
+      const ux = (sx - px) / len, uy = (sy - py) / len;
+      const ex = Math.max(w / 2 + 6, sx - obj.width * 0.1);
+      const run = Math.max(sx - ex, w * 1.5);
+      d += ` C${f(sx + ux * run * 0.9)} ${f(sy + uy * run * 0.9)} ${f(ex)} ${f(sy + run * 0.8)} ${f(ex)} ${f(sy + run * 1.8)}`;
+      // The shadow (drawn 8px lower) overlaps the next section's shadow by 1px, 4px above the edge.
+      setCord({ d: `${d} L${f(ex)} ${f(stage.height + 2)}`, shadow: `${d} L${f(ex)} ${f(stage.height - 11)}`, w, fade: [pts[0]![1], sy + run * 1.8] });
+      onCord(ex, w);
     };
     measure();
     const ro = new ResizeObserver(measure);
     if (stageRef.current) ro.observe(stageRef.current);
     return () => ro.disconnect();
-  }, [onCordX]);
+  }, [onCord]);
 
   return (
     <section ref={ref} className={s.run} aria-label="How a ParyonUSD loan reaches the red line">
       <div className={s.stage} ref={stageRef}>
         {cord && (
           <svg className={s.innerCord} aria-hidden="true">
-            <path d={cord} />
+            <path d={cord.shadow} className={s.cordShadow} style={{ strokeWidth: cord.w + 5 }} />
+            <path d={cord.d} style={{ strokeWidth: cord.w }} />
+            <defs>
+              <linearGradient id="gauge-cord-shade" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={cord.fade[0]} y2={cord.fade[1]}>
+                <stop offset="0" stopColor="#000" stopOpacity="0" />
+                <stop offset="1" stopColor="#000" stopOpacity="0.08" />
+              </linearGradient>
+              <filter id="gauge-cord-sheen" x="-5%" y="-5%" width="110%" height="110%">
+                <feGaussianBlur stdDeviation={cord.w * SHEEN.blur} />
+              </filter>
+            </defs>
+            <path d={cord.d} className={s.sheen} filter="url(#gauge-cord-sheen)" style={{ strokeWidth: cord.w * SHEEN.width, translate: `${cord.w * SHEEN.x}px ${cord.w * SHEEN.y}px` }} />
           </svg>
         )}
         <div className={s.grid} aria-hidden="true" />

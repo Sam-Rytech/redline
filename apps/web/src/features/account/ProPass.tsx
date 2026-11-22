@@ -11,6 +11,7 @@ import { Button } from "../../ui/Button";
 import { Modal } from "../../ui/Modal";
 import { WalletQr } from "../../ui/WalletQr";
 import { SignInPrompt } from "./SignInPrompt";
+import { Reveal } from "../../ui/Reveal";
 import s from "./Account.module.css";
 
 type Pay =
@@ -82,7 +83,8 @@ export function ProPass() {
 
   return (
     <main className={s.page}>
-      <h1 className={`${s.h1} display`}>Pro pass</h1>
+      <Reveal as="h1" className={`${s.h1} display`}>Pro pass</Reveal>
+      <Reveal from="left" delay={0.1}>
       <section className={s.block}>
         <ul className={s.features}>
           <li>Watch every loan you hold, not just one</li>
@@ -106,6 +108,7 @@ export function ProPass() {
           </div>
         )}
       </section>
+      </Reveal>
       <Modal
         open={pay.stage !== "idle"}
         onClose={close}

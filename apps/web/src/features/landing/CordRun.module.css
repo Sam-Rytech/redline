@@ -1,12 +1,13 @@
-.run { position: relative; background: var(--bg-grouped); padding: var(--space-16) var(--gutter) 0; display: grid; gap: 28vh; overflow: hidden; }
+.run { position: relative; margin-top: -4px; background: var(--bg-grouped); padding: var(--space-16) var(--gutter) 0; display: grid; gap: 28vh; overflow: hidden; }
 .cord { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
-.cordShadow, .cordBody { fill: none; stroke-linecap: round; }
-.cordShadow { stroke: rgb(0 0 0 / 0.08); stroke-width: 18px; translate: 4px 8px; }
-.cordBody { stroke: #1c1b1a; stroke-width: 13px; }
+.cordShadow, .cordBody, .cordSheen { fill: none; stroke-linecap: round; }
+.cordSheen { stroke: rgb(255 255 255 / 0.16); }
+.cordShadow { stroke: rgb(0 0 0 / 0.08); translate: 4px 8px; }
+.cordBody { stroke: #1c1b1a; }
 .block { composes: card from "../../ui/Card/Card.module.css"; z-index: 1; max-width: 30rem; display: grid; gap: var(--space-4); justify-items: start; }
 .num { font-family: var(--font-display); font-weight: 500; font-size: 4rem; line-height: 1; letter-spacing: -0.02em; color: var(--label-3); }
-.left { justify-self: start; }
-.right { justify-self: end; }
+.slotLeft { justify-self: start; position: relative; z-index: 1; }
+.slotRight { justify-self: end; position: relative; z-index: 1; }
 .kicker { color: var(--brand-red-text); }
 .title { font-size: clamp(2.25rem, 4.2vw, 3.5rem); }
 .body { font-size: 1.0625rem; line-height: var(--lead-prose); color: var(--label-2); }
@@ -19,7 +20,7 @@
 .connect { display: grid; gap: var(--space-4); justify-items: center; max-width: 34rem; }
 @media (max-width: 800px) {
   .run { gap: 18vh; }
-  .left, .right { justify-self: stretch; }
+  .slotLeft, .slotRight { justify-self: stretch; }
 }
 .plans { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); width: 100%; }
 .plan { background: var(--bg-grouped); border-radius: var(--radius-card); padding: var(--space-4); display: grid; gap: var(--space-1); align-content: start; }

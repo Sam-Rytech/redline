@@ -1,6 +1,7 @@
 import { useParams } from "react-router";
 import { NotFound } from "../../app/NotFound";
 import { LEGAL } from "./docs";
+import { Reveal } from "../../ui/Reveal";
 import s from "./Legal.module.css";
 
 export function LegalPage() {
@@ -9,13 +10,13 @@ export function LegalPage() {
   if (!d) return <NotFound />;
   return (
     <main className={s.page}>
-      <h1 className={`${s.h1} display`}>{d.title}</h1>
-      <p className="mono">Updated {d.updated}</p>
-      {d.sections.map((sec) => (
-        <section key={sec.h} className={s.sec}>
+      <Reveal as="h1" className={`${s.h1} display`}>{d.title}</Reveal>
+      <Reveal as="p" delay={0.1} className="mono">Updated {d.updated}</Reveal>
+      {d.sections.map((sec, i) => (
+        <Reveal as="section" key={sec.h} delay={i < 3 ? 0.15 + i * 0.07 : 0} className={s.sec}>
           <h2 className={s.h2}>{sec.h}</h2>
           {sec.p.map((p) => <p key={p.slice(0, 24)}>{p}</p>)}
-        </section>
+        </Reveal>
       ))}
     </main>
   );
