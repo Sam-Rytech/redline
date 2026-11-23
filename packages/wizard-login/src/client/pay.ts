@@ -18,6 +18,7 @@ import {
   invoiceOpReturnHex,
 } from "../payment.js";
 import { LOGIN_ADDRESS_COUNT, deriveAddresses, txidOf, type LoginWallet } from "./login.js";
+import { relaySignRequest } from "./relay.js";
 
 export const PENDING_INVOICE_KEY = "redline-pending-invoice";
 export const PAY_USER_PROMPT = "Pay 30-day Redline Pro pass";
@@ -321,7 +322,7 @@ export async function payProPass(opts: PayProPassOptions): Promise<Invoice> {
   try {
     const res = await manager.signTransaction(
       {
-        transaction: { transaction: built.transaction, sourceOutputs: built.sourceOutputs, broadcast: true, userPrompt: PAY_USER_PROMPT },
+        transaction: relaySignRequest({ transaction: built.transaction, sourceOutputs: built.sourceOutputs, broadcast: true, userPrompt: PAY_USER_PROMPT }),
         inputPaths: coins.map((c, i) => [i, c.path[0], c.path[1]]),
       },
       signal ? { signal } : undefined,
