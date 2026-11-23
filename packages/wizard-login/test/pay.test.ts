@@ -1,5 +1,6 @@
 // payProPass(): unit tests for coin selection / tx building, and end to end against the real
 // Redline app (createApp) with an in-memory DB, a fake chain and a fake wallet that signs every input.
+import { decodeRelayRequest, viaRelay } from "./relay-fake.js";
 import { randomBytes } from "node:crypto";
 import {
   binToHex,
@@ -188,9 +189,10 @@ function fakeManager(w: TestWallet, fake: ReturnType<typeof fakePaymentChain>, o
       { name: "receive", xpub: w.xpubReceive },
       { name: "change", xpub: w.xpubChange },
     ],
-    async signTransaction(req) {
-      const t = req.transaction;
-      const tx = t.transaction as TransactionCommon;
+    async signTransaction(sent) {
+      const req = viaRelay(sent);
+      const t = { ...req.transaction, ...decodeRelayRequest(req.transaction) };
+      const tx = t.transaction;
       signCalls.push({ transaction: tx, broadcast: t.broadcast, userPrompt: t.userPrompt, inputPaths: req.inputPaths });
       if (o.reject) throw new Error(o.reject);
       const keys = tx.inputs.map((_, i) => {

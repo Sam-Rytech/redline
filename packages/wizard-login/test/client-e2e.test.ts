@@ -1,5 +1,6 @@
 // Client ↔ server compatibility: wizardLogin() against the real Redline app (createApp) with an
 // in-memory DB and a fake chain, through a fake fetch that keeps cookies like a browser would.
+import { decodeRelayRequest, viaRelay } from "./relay-fake.js";
 import { binToHex, encodeTransaction, hexToBin, lockingBytecodeToCashAddress, sha256, utf8ToBin, type TransactionCommon } from "@bitauth/libauth";
 import { describe, expect, it } from "vitest";
 import type { MeResponse, Utxo } from "@redline/api-types";
@@ -126,11 +127,11 @@ function fakeManager(
         { name: "receive", xpub: w.xpubReceive },
         { name: "change", xpub: w.xpubChange },
       ],
-    async signTransaction(req) {
-      const t = req.transaction;
-      if (typeof t.transaction === "string") throw new Error("fake wallet expects a libauth Transaction object");
+    async signTransaction(sent) {
+      const req = viaRelay(sent);
+      const t = { ...req.transaction, ...decodeRelayRequest(req.transaction) };
       signCalls.push({
-        transaction: t.transaction as TransactionCommon,
+        transaction: t.transaction,
         sourceOutputs: t.sourceOutputs as unknown as SignCall["sourceOutputs"],
         broadcast: t.broadcast,
         userPrompt: t.userPrompt,

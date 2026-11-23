@@ -15,6 +15,7 @@ import {
 import type { ApiError, ChallengeRequest, ChallengeResponse, MeResponse, Utxo, VerifyRequest } from "@redline/api-types";
 import type { DappConnectionManager } from "@wizardconnect/dapp";
 import { MIN_LOGIN_UTXO_SATS, buildUnsignedLoginTx } from "../protocol.js";
+import { relaySignRequest } from "./relay.js";
 
 export type LoginErrorCode = "no_paths" | "no_funds" | "wallet_rejected" | "server_rejected" | "network";
 
@@ -194,7 +195,7 @@ export async function wizardLogin(opts: WizardLoginOptions): Promise<MeResponse>
   try {
     const res = await manager.signTransaction(
       {
-        transaction: { transaction, sourceOutputs: [sourceOutput], broadcast: false, userPrompt: LOGIN_USER_PROMPT },
+        transaction: relaySignRequest({ transaction, sourceOutputs: [sourceOutput], broadcast: false, userPrompt: LOGIN_USER_PROMPT }),
         // input order is final: one input
         inputPaths: [[0, "receive", index]],
       },
