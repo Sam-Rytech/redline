@@ -16,8 +16,8 @@ Tagline: "Know before your loan hits the red."
 ## Name and use
 
 - Written "Redline". One word, capital R.
-- Always shown with the line "Independent project. Not affiliated with ParyonUSD." in the
-  footer of every page. Never use Paryon's logo or colours, and never imply endorsement.
+- The line "Independent project, not affiliated with ParyonUSD." appears in the Terms of use
+  and the README. Never use Paryon's logo or colours, and never imply endorsement.
 - It is a name that explains itself on first read: a red line is the point a gauge warns you
   about. No further explanation is needed on a gallery card.
 
