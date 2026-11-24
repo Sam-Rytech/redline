@@ -18,7 +18,7 @@ Tagline: "Know before your loan hits the red."
 - Written "Redline". One word, capital R.
 - Always shown with the line "Independent project. Not affiliated with ParyonUSD." in the
   footer of every page. Never use Paryon's logo or colours, and never imply endorsement.
-- It is a name that explains itself to a tired judge: a red line is the point a gauge warns you
+- It is a name that explains itself on first read: a red line is the point a gauge warns you
   about. No further explanation is needed on a gallery card.
 
 ## Position
@@ -38,8 +38,8 @@ do.
 | "53 loans hold 352 BCH that their owners have not claimed." | "Unlock hidden value in your wallet" |
 | "Nothing to do right now. You are 31% above the line." | "You're all set! Stay safe out there" |
 
-Public copy (landing page, README, store text, social posts) goes through the content-writer
-skill and its scanner before it ships. No emojis anywhere in the product, docs or commits.
+Public copy (landing page, README, store text, social posts) is reviewed for plain, accurate
+language before it ships. No emojis anywhere in the product, docs or commits.
 
 ## Identity direction
 

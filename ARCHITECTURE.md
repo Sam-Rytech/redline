@@ -3,12 +3,11 @@
 > **Redline** — "Know before your loan hits the red." Independent project, not affiliated with ParyonUSD; say so in the site footer.
 
 **Hackathon:** BCH BLAZE 2026 — Mainnet track
-**Deadline:** Sun 22 Nov 2026, 14:00 UTC (15:00 Lagos). Internal freeze: Sun 11:00 Lagos.
 **One-liner:** A smoke alarm for ParyonUSD loans. Sign in with your BCH wallet (no password), see your loans' risk, get Telegram alerts before you lose money.
 
 Related documents (all in `docs/`): `PRD.md` (what and why), `SECURITY.md`, `DATABASE.md`, `API.md`, `DESIGN.md`, `BRAND.md`, `COMPLIANCE.md`, `PRACTICES.md`. Where `SECURITY.md` or `DATABASE.md` differ from this file, they win; the differences are listed in `DATABASE.md`.
 
-Items marked **⚠ VERIFY** are not yet confirmed and each has a gate in `PROGRESS.md`. Do not build on top of them until the gate passes.
+Items marked **VERIFY** are not yet confirmed. Do not build on top of them until they are.
 
 ---
 
@@ -262,9 +261,8 @@ Env vars: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGI
 7. Selene scans ~20 addresses ahead; don't derive far-out indices and expect the wallet to see them.
 8. Paytaca doesn't show unconfirmed txs — tell testers "it may take ~10 min to appear in Paytaca".
 9. Banner + prizes need a **CashTokens** (`bitcoincash:z…`) address.
-10. Electrum can't search by token category → duplicate-loan-key detection needs Chaingraph (stretch; ⚠ VERIFY a public endpoint).
+10. Electrum can't search by token category → duplicate-loan-key detection needs Chaingraph (stretch; VERIFY a public endpoint).
 11. Price contract was migrated (`PriceContract` → `PriceContractGuarded`); don't hard-code the old address.
-12. DoraHacks: new accounts (< 7 days) can create max 3 BUIDLs — create the BUIDL early.
 
 ---
 
@@ -274,10 +272,9 @@ Env vars: `ELECTRUM_HOST`, `TELEGRAM_BOT_TOKEN`, `SESSION_SECRET`, `PUBLIC_ORIGI
 |---|---|
 | Judges can make a useful mainnet tx | Pro subscription payment (0.25 PUSD or BCH equivalent) |
 | WizardConnect or XO | WizardConnect for sign-in and payment |
-| Live demo, one click | `https://<app>` with "Watch any loan" so judges without a loan can try it |
+| Live demo, one click | `https://redline.namite.xyz` with "Watch any loan" so judges without a loan can try it |
 | Banner: Widget Factory slides, repo, CashTokens address | Persistent top banner on every page |
 | Pre-existing work | None — banner states "First commit 20 Nov 2026, no pre-hackathon code" |
-| Telegram check-in + roll call | Done (verify roll-call timestamp < 14 Nov 19:25) |
 
 ---
 
