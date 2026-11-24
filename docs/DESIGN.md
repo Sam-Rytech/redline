@@ -2,12 +2,11 @@
 
 Structure and behaviour follow Apple's Human Interface Guidelines (HIG). Visual identity is
 separate and lives in `BRAND.md`. Where the two disagree on surface, identity wins. Where they
-disagree on accessibility, input or target size, the HIG wins, and the change is written in
-the decision log in `PROGRESS.md`.
+disagree on accessibility, input or target size, the HIG wins.
 
 The numbers below are decided once. `docs/design/tokens.css` is the code form: components use
 its variables and nothing else. Source for the numbers: the HIG typography, layout and color
-pages and the web port in the apple-hig skill.
+pages.
 
 ## Platform stance
 

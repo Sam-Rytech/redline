@@ -1,7 +1,6 @@
 # Redline: product requirements
 
 Owner: Sam (back end, product), front-end owner for `apps/web`. Last updated 21 Nov 2026.
-How this was reached: `docs/review/2026-11-21-ideation-review.md`.
 
 ## 1. Words used in this document
 

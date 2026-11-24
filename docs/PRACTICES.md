@@ -23,8 +23,7 @@ workbench/       gitignored scratch: plans, experiments, one-off scripts, moodbo
 
 Nothing that is not the product or its documentation goes at the repo root. Plans, progress
 notes, asset briefs, design reviews, demo scripts and one-off scripts go in `workbench/`.
-(`ARCHITECTURE.md` and `PROGRESS.md` predate this rule and stay at the root until we agree to
-move them.)
+(`ARCHITECTURE.md` predates this rule and stays at the root.)
 
 ## Documentation
 
@@ -35,7 +34,7 @@ move them.)
 - README is for someone using or running the product: what it is, how it works, how to run it,
   configuration, layout. Hosting limits, internal costs and outreach plans stay in `workbench/`.
 - Anything a person outside the team will read (landing copy, README, posts, submission text)
-  goes through the content-writer skill and its scanner first. Internal docs do not.
+  is reviewed for plain, accurate language before it ships.
 
 ## Code
 
