@@ -4,9 +4,9 @@ export type LegalDoc = { title: string; updated: string; sections: { h: string; 
 export const LEGAL: Record<string, LegalDoc> = {
   terms: {
     title: "Terms of use",
-    updated: "21 November 2026",
+    updated: "24 November 2026",
     sections: [
-      { h: "Who we are", p: ["Redline is an independent project. It is not made, run or endorsed by ParyonUSD or its developers."] },
+      { h: "Who we are", p: ["Redline is built and run by Namite Studio, a remote studio. In these terms, “we” means Namite Studio.", "Redline is an independent project, not affiliated with ParyonUSD. It is not made, run or endorsed by ParyonUSD or its developers."] },
       { h: "What Redline does", p: ["Redline reads ParyonUSD loans from the Bitcoin Cash chain and sends alerts about them. It cannot move, repay or change any loan. Every action on a loan happens in your own wallet and in Paryon."] },
       { h: "Alerts are best effort", p: ["Alerts depend on chain data, price data, our servers and Telegram. They can be late, wrong or missed. Do not rely on Redline as your only way of watching a loan.", "Redline is not financial advice. Decisions about your loans are yours."] },
       { h: "The Pro pass", p: ["The Pro pass costs 0.25 USD, paid once in BCH at the price shown before you pay. It lasts 30 days from payment and does not renew. You are never charged again unless you buy another pass. There is nothing to cancel.", "Payments on Bitcoin Cash cannot be reversed. If a pass does not activate after a confirmed payment, contact us through the project's source repository and we will put it right."] },
@@ -16,8 +16,9 @@ export const LEGAL: Record<string, LegalDoc> = {
   },
   privacy: {
     title: "Privacy policy",
-    updated: "21 November 2026",
+    updated: "24 November 2026",
     sections: [
+      { h: "Who is responsible", p: ["Namite Studio runs Redline and is responsible for the data described here."] },
       { h: "What we store", p: ["A hash that identifies your account, your plan and when Pro ends, your Telegram chat id if you connect Telegram, the loans you watch and the alerts we sent you, and your signed-in session.", "We do not store your name, email address or date of birth. The age screen keeps only whether you passed."] },
       { h: "What signing in reveals", p: ["To find your loans, signing in shares your wallet's public keys (xpubs) and one unspent output with our server. The keys are kept only in your session and are deleted when it ends."] },
       { h: "What we do not do", p: ["No analytics, no tracking, no advertising, no session recording. We do not sell or share your data."] },

@@ -1,6 +1,6 @@
 # Redline — Architecture
 
-> **Redline** — "Know before your loan hits the red." Independent project, not affiliated with ParyonUSD; say so in the site footer.
+> **Redline** — "Know before your loan hits the red." Built and run by Namite Studio. Independent project, not affiliated with ParyonUSD; the Terms of use say so.
 
 **Hackathon:** BCH BLAZE 2026 — Mainnet track
 **One-liner:** A smoke alarm for ParyonUSD loans. Sign in with your BCH wallet (no password), see your loans' risk, get Telegram alerts before you lose money.
